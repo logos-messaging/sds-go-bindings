@@ -570,18 +570,16 @@ func TestMultiChannel_SingleRM(t *testing.T) {
 	require.Equal(t, msg1, *unwrapped1.Message)
 
 	// Verify channel ID is extracted correctly
-	if unwrapped1.ChannelId != nil {
-		require.Equal(t, channel1, *unwrapped1.ChannelId)
-	}
+	require.NotNil(t, unwrapped1.ChannelId, "Expected ChannelId to be not nil")
+	require.Equal(t, channel1, *unwrapped1.ChannelId)
 
 	unwrapped2, err := rm.UnwrapReceivedMessage(wrappedMsg2)
 	require.NoError(t, err)
 	require.Equal(t, msg2, *unwrapped2.Message)
 
 	// Verify channel ID is extracted correctly
-	if unwrapped2.ChannelId != nil {
-		require.Equal(t, channel2, *unwrapped2.ChannelId)
-	}
+	require.NotNil(t, unwrapped2.ChannelId, "Expected ChannelId to be not nil")
+	require.Equal(t, channel2, *unwrapped2.ChannelId)
 
 	// Test that the same RM can handle dependencies for different channels
 	err = rm.MarkDependenciesMet([]MessageID{msgID1}, channel1)
