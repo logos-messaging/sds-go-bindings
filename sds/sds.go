@@ -10,6 +10,8 @@ package sds
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, void* userData);
 
+	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, void* userData);
+
 	typedef struct {
 		int ret;
 		char* msg;
@@ -76,6 +78,10 @@ package sds
 		// This technique is needed because cgo only allows to export Go functions and not methods.
 
 		SdsSetEventCallback(rmCtx, (SdsCallBack) sdsGlobalEventCallback, rmCtx);
+	}
+
+	static void cGoSdsSetRetrievalHintProvider(void* rmCtx) {
+		SdsSetRetrievalHintProvider(rmCtx, (SdsRetrievalHintProvider) sdsGlobalRetrievalHintProvider, rmCtx);
 	}
 
 	static void cGoSdsCleanupReliabilityManager(void* rmCtx, void* resp) {
@@ -158,8 +164,9 @@ func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
 type EventCallbacks struct {
 	OnMessageReady        func(messageId MessageID, channelId string)
 	OnMessageSent         func(messageId MessageID, channelId string)
-	OnMissingDependencies func(messageId MessageID, missingDeps []MessageID, channelId string)
+	OnMissingDependencies func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
 	OnPeriodicSync        func()
+	RetrievalHintProvider func(messageId MessageID) []byte
 }
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
@@ -189,6 +196,7 @@ func NewReliabilityManager() (*ReliabilityManager, error) {
 
 	C.cGoSdsSetEventCallback(rm.rmCtx)
 	registerReliabilityManager(rm)
+	C.cGoSdsSetRetrievalHintProvider(rm.rmCtx)
 
 	Debug("Successfully created Reliability Manager")
 	return rm, nil
@@ -246,12 +254,31 @@ type msgEvent struct {
 
 type missingDepsEvent struct {
 	MessageId   MessageID   `json:"messageId"`
-	MissingDeps []MessageID `json:"missingDeps"`
-	ChannelId   string      `json:"channelId"`
+	MissingDeps []HistoryEntry `json:"missingDeps"`
+	ChannelId   string         `json:"channelId"`
 }
 
 func (rm *ReliabilityManager) RegisterCallbacks(callbacks EventCallbacks) {
 	rm.callbacks = callbacks
+}
+
+//export sdsGlobalRetrievalHintProvider
+func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C.size_t, userData unsafe.Pointer) {
+	msgId := C.GoString(messageId)
+	Debug("sdsGlobalRetrievalHintProvider called for messageId: %s", msgId)
+	rm, ok := rmRegistry[userData]
+	if ok && rm.callbacks.RetrievalHintProvider != nil {
+		Debug("Found RM and callback, calling provider")
+		hintBytes := rm.callbacks.RetrievalHintProvider(MessageID(msgId))
+		Debug("Provider returned hint of length: %d", len(hintBytes))
+		if len(hintBytes) > 0 {
+			*hint = (*C.char)(C.CBytes(hintBytes))
+			*hintLen = C.size_t(len(hintBytes))
+			Debug("Set hint in C memory: %s", string(hintBytes))
+		}
+	} else {
+		Debug("No RM found or no callback registered")
+	}
 }
 
 func (rm *ReliabilityManager) OnEvent(eventStr string) {
@@ -467,10 +494,11 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 		}
 		Debug("Successfully unwrapped message")
 
-		unwrappedMessage := UnwrappedMessage{}
+		Debug("Unwrapped message JSON: %s", resStr)
+		var unwrappedMessage UnwrappedMessage
 		err := json.Unmarshal([]byte(resStr), &unwrappedMessage)
 		if err != nil {
-			Error("Failed to unmarshal unwrapped message")
+			Error("Failed to unmarshal unwrapped message: %v", err)
 			return nil, err
 		}
 
