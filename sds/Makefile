@@ -29,9 +29,9 @@ build: prepare
 	go build ./...
 
 build-android: prepare
-	@echo "Building libsds..."
+	@echo "Building libsds for Android..."
 	@cd $(NIM_SDS_DIR) && make libsds-android
-	@echo "Building SDS Go Bindings..."
+	@echo "Building SDS Go Bindings for Android..."
 	go build ./...
 
 # Clean up generated files
