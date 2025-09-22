@@ -15,7 +15,7 @@ prepare:
 		cd ../third_party/ && \
 		git clone https://github.com/waku-org/nim-sds && \
 		cd nim-sds && \
-		git checkout add-windows-support; \
+		git checkout master; \
 		make update; \
 	else \
 		echo "nim-sds repository already exists."; \
