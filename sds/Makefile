@@ -10,8 +10,8 @@ prepare:
 	@echo "Creating third_party directory..."
 	@mkdir -p ../third_party
 
-	@echo "Cloning nim-sds repository..."
 	@if [ ! -d "../third_party/nim-sds" ]; then \
+		@echo "Cloning nim-sds repository..."
 		cd ../third_party/ && \
 		git clone https://github.com/waku-org/nim-sds && \
 		cd nim-sds && \
