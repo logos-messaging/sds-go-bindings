@@ -135,16 +135,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unsafe"
 )
 
 //export SdsGoCallback
 func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
-    if resp != nil {
-        m := (*C.SdsResp)(resp)
-        m.ret = ret
-        m.msg = msg
+	if resp != nil {
+		m := (*C.SdsResp)(resp)
+		m.ret = ret
+		m.msg = msg
 		m.len = len
 		wg := (*sync.WaitGroup)(m.ffiWg)
 		wg.Done()
@@ -152,10 +151,10 @@ func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
 }
 
 func NewReliabilityManager() (*ReliabilityManager, error) {
-    Debug("Creating new Reliability Manager")
-    rm := &ReliabilityManager{}
+	Debug("Creating new Reliability Manager")
+	rm := &ReliabilityManager{}
 
-    wg := sync.WaitGroup{}
+	wg := sync.WaitGroup{}
 
 	var resp = C.allocResp(unsafe.Pointer(&wg))
 	defer C.freeResp(resp)
@@ -179,20 +178,20 @@ func NewReliabilityManager() (*ReliabilityManager, error) {
 
 //export sdsGlobalEventCallback
 func sdsGlobalEventCallback(callerRet C.int, msg *C.char, len C.size_t, userData unsafe.Pointer) {
-    if callerRet == C.RET_OK {
-        eventStr := C.GoStringN(msg, C.int(len))
-        rm, ok := rmRegistry[userData] // userData contains rm's ctx
-        if ok {
-            rm.OnEvent(eventStr)
-        }
-    } else {
-        if len != 0 {
-            errMsg := C.GoStringN(msg, C.int(len))
-            Error("sdsGlobalEventCallback retCode not ok, retCode: %v: %v", callerRet, errMsg)
-        } else {
-            Error("sdsGlobalEventCallback retCode not ok, retCode: %v", callerRet)
-        }
-    }
+	if callerRet == C.RET_OK {
+		eventStr := C.GoStringN(msg, C.int(len))
+		rm, ok := rmRegistry[userData] // userData contains rm's ctx
+		if ok {
+			rm.OnEvent(eventStr)
+		}
+	} else {
+		if len != 0 {
+			errMsg := C.GoStringN(msg, C.int(len))
+			Error("sdsGlobalEventCallback retCode not ok, retCode: %v: %v", callerRet, errMsg)
+		} else {
+			Error("sdsGlobalEventCallback retCode not ok, retCode: %v", callerRet)
+		}
+	}
 }
 
 func (rm *ReliabilityManager) Cleanup() error {
