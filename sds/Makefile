@@ -1,43 +1,53 @@
 # Makefile for SDS Go Bindings
 
-# Directories
-THIRD_PARTY_DIR := ../third_party
-NIM_SDS_REPO := https://github.com/waku-org/nim-sds
-NIM_SDS_DIR := $(THIRD_PARTY_DIR)/nim-sds
+# The NIM_SDS_LIB_PATH and NIM_SDS_HEADER_PATH env vars should be defined beforehand
+# Therefore, we assume the libsds library and headers are located in the specified paths
+export CGO_CFLAGS="-I${NIM_SDS_HEADER_PATH}/"
+export CGO_LDFLAGS="-L${NIM_SDS_LIB_PATH}/ -lsds -Wl,-rpath,${NIM_SDS_LIB_PATH}/"
+
+# Expected files
+HEADER_FILE := $(NIM_SDS_HEADER_PATH)/libsds.h
+LIB_FILES   := $(wildcard $(NIM_SDS_LIB_PATH)/libsds.*)
 
 .PHONY: all clean prepare build-libsds build
 
 # Default target
 all: build
 
-# Prepare third_party directory and clone nim-sds
-prepare:
-	@echo "Creating third_party directory..."
-	@mkdir -p $(THIRD_PARTY_DIR)
-
-	@echo "Cloning nim-sds repository..."
-	@if [ ! -d "$(NIM_SDS_DIR)" ]; then \
-		cd $(THIRD_PARTY_DIR) && \
-		git clone $(NIM_SDS_REPO) && \
-		cd $(NIM_SDS_DIR) && \
-		git checkout master; \
-		make update; \
-	else \
-		echo "nim-sds repository already exists."; \
+# Validate necessary folders and files
+check-folders:
+	@echo Checking header directory ...
+	@if [ -z "$(NIM_SDS_HEADER_PATH)" ]; then \
+		echo "ERROR: NIM_SDS_HEADER_PATH not set"; exit 1; \
+	fi
+	@if [ ! -d "$(NIM_SDS_HEADER_PATH)" ]; then \
+		echo "ERROR: Header path does not exist: $(NIM_SDS_HEADER_PATH)"; exit 1; \
 	fi
 
-# Build libsds
-build-libsds: prepare
-	@echo "Building libsds..."
-	@cd $(NIM_SDS_DIR) && make libsds
+	@echo Checking lib directory ...
+	@if [ -z "$(NIM_SDS_LIB_PATH)" ]; then \
+		echo "ERROR: NIM_SDS_LIB_PATH not set"; exit 1; \
+	fi
+	@if [ ! -d "$(NIM_SDS_LIB_PATH)" ]; then \
+		echo "ERROR: Library path does not exist: $(NIM_SDS_LIB_PATH)"; exit 1; \
+	fi
+
+	@echo Checking for libsds.h ...
+	@if [ ! -f "$(HEADER_FILE)" ]; then \
+		echo "ERROR: libsds.h not found at: $(HEADER_FILE)"; exit 1; \
+	fi
+
+	@echo Checking for libsds library file ...
+	@if [ -z "$(LIB_FILES)" ]; then \
+		echo "ERROR: No libsds library file found in: $(NIM_SDS_LIB_PATH)"; exit 1; \
+	fi
 
 # Build SDS Go Bindings
-build: build-libsds
+build: check-folders
 	@echo "Building SDS Go Bindings..."
 	go build ./...
 
 # Clean up generated files
 clean:
 	@echo "Cleaning up..."
-	@rm -rf $(THIRD_PARTY_DIR)
 	@rm -f sds-go-bindings
