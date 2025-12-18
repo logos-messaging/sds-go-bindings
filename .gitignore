@@ -23,3 +23,5 @@ go.work
 # Generated dependencies and cache
 third_party
 nimcache
+
+.idea
