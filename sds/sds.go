@@ -136,6 +136,13 @@ import (
 	"strings"
 	"sync"
 	"unsafe"
+
+	"go.uber.org/zap"
+	errorspkg "github.com/pkg/errors"
+)
+
+var (
+	errEmptyReliabilityManager = errors.New("empty reliability manager")
 )
 
 //export SdsGoCallback
@@ -150,9 +157,16 @@ func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
 	}
 }
 
-func NewReliabilityManager() (*ReliabilityManager, error) {
-	Debug("Creating new Reliability Manager")
-	rm := &ReliabilityManager{}
+func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	rm := &ReliabilityManager{
+		logger: logger,
+	}
+
+	rm.logger.Info("creating new reliability manager")
 
 	wg := sync.WaitGroup{}
 
@@ -172,36 +186,31 @@ func NewReliabilityManager() (*ReliabilityManager, error) {
 	C.cGoSdsSetEventCallback(rm.rmCtx)
 	registerReliabilityManager(rm)
 
-	Debug("Successfully created Reliability Manager")
+	rm.logger.Debug("successfully created reliability manager")
 	return rm, nil
 }
 
 //export sdsGlobalEventCallback
 func sdsGlobalEventCallback(callerRet C.int, msg *C.char, len C.size_t, userData unsafe.Pointer) {
+	msgStr := C.GoStringN(msg, C.int(len))
+	rm, ok := rmRegistry[userData] // userData contains rm's ctx
+	if !ok {
+		return
+	}
+
 	if callerRet == C.RET_OK {
-		eventStr := C.GoStringN(msg, C.int(len))
-		rm, ok := rmRegistry[userData] // userData contains rm's ctx
-		if ok {
-			rm.OnEvent(eventStr)
-		}
+		rm.OnEvent(msgStr)
 	} else {
-		if len != 0 {
-			errMsg := C.GoStringN(msg, C.int(len))
-			Error("sdsGlobalEventCallback retCode not ok, retCode: %v: %v", callerRet, errMsg)
-		} else {
-			Error("sdsGlobalEventCallback retCode not ok, retCode: %v", callerRet)
-		}
+		rm.OnCallbackError(int(callerRet), msgStr)
 	}
 }
 
 func (rm *ReliabilityManager) Cleanup() error {
 	if rm == nil {
-		err := errors.New("reliability manager is nil in Cleanup")
-		Error("Failed to cleanup %v", err)
-		return err
+		return errEmptyReliabilityManager
 	}
 
-	Debug("Cleaning up reliability manager")
+	rm.logger.Debug("cleaning up reliability manager")
 
 	wg := sync.WaitGroup{}
 	var resp = C.allocResp(unsafe.Pointer(&wg))
@@ -213,24 +222,20 @@ func (rm *ReliabilityManager) Cleanup() error {
 
 	if C.getRet(resp) == C.RET_OK {
 		unregisterReliabilityManager(rm)
-		Debug("Successfully cleaned up reliability manager")
+		rm.logger.Debug("cleaned up reliability manager")
 		return nil
 	}
 
 	errMsg := "error CleanupReliabilityManager: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	Error("Failed to cleanup reliability manager: %v", errMsg)
-
 	return errors.New(errMsg)
 }
 
 func (rm *ReliabilityManager) Reset() error {
 	if rm == nil {
-		err := errors.New("reliability manager is nil in Reset")
-		Error("Failed to reset %v", err)
-		return err
+		return errEmptyReliabilityManager
 	}
 
-	Debug("Resetting reliability manager")
+	rm.logger.Debug("resetting reliability manager")
 
 	wg := sync.WaitGroup{}
 	var resp = C.allocResp(unsafe.Pointer(&wg))
@@ -241,24 +246,21 @@ func (rm *ReliabilityManager) Reset() error {
 	wg.Wait()
 
 	if C.getRet(resp) == C.RET_OK {
-		Debug("Successfully resetted reliability manager")
+		rm.logger.Debug("successfully resetted reliability manager")
 		return nil
 	}
 
 	errMsg := "error ResetReliabilityManager: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	Error("Failed to reset reliability manager: %v", errMsg)
-
 	return errors.New(errMsg)
 }
 
 func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId MessageID, channelId string) ([]byte, error) {
 	if rm == nil {
-		err := errors.New("reliability manager is nil in WrapOutgoingMessage")
-		Error("Failed to wrap outgoing message %v", err)
-		return nil, err
+		return nil, errEmptyReliabilityManager
 	}
 
-	Debug("Wrapping outgoing message %v", messageId)
+	logger := rm.logger.With(zap.String("messageId", string(messageId)))
+	logger.Debug("wrapping outgoing message", zap.String("messageId", string(messageId)))
 
 	wg := sync.WaitGroup{}
 	var resp = C.allocResp(unsafe.Pointer(&wg))
@@ -286,10 +288,10 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	if C.getRet(resp) == C.RET_OK {
 		resStr := C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
 		if resStr == "" {
-			Debug("Received empty res string for messageId: %v", messageId)
+			logger.Debug("received empty res string for messageId")
 			return nil, nil
 		}
-		Debug("Successfully wrapped message %s", messageId)
+		logger.Debug("successfully wrapped message")
 
 		parts := strings.Split(resStr, ",")
 		bytes := make([]byte, len(parts))
@@ -306,16 +308,12 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	}
 
 	errMsg := "error WrapOutgoingMessage: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	Error("Failed to wrap message %v: %v", messageId, errMsg)
-
 	return nil, errors.New(errMsg)
 }
 
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {
 	if rm == nil {
-		err := errors.New("reliability manager is nil in UnwrapReceivedMessage")
-		Error("Failed to unwrap received message %v", err)
-		return nil, err
+		return nil, errEmptyReliabilityManager
 	}
 
 	wg := sync.WaitGroup{}
@@ -338,33 +336,28 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 	if C.getRet(resp) == C.RET_OK {
 		resStr := C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
 		if resStr == "" {
-			Debug("Received empty res string")
+			rm.logger.Debug("received empty res string")
 			return nil, nil
 		}
-		Debug("Successfully unwrapped message")
+		rm.logger.Debug("successfully unwrapped message")
 
 		unwrappedMessage := UnwrappedMessage{}
 		err := json.Unmarshal([]byte(resStr), &unwrappedMessage)
 		if err != nil {
-			Error("Failed to unmarshal unwrapped message")
-			return nil, err
+			return nil, errorspkg.Wrap(err, "failed to unmarshal unwrapped message")
 		}
 
 		return &unwrappedMessage, nil
 	}
 
 	errMsg := "error UnwrapReceivedMessage: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	Error("Failed to unwrap message: %v", errMsg)
-
 	return nil, errors.New(errMsg)
 }
 
 // MarkDependenciesMet informs the library that dependencies are met
 func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channelId string) error {
 	if rm == nil {
-		err := errors.New("reliability manager is nil in MarkDependenciesMet")
-		Error("Failed to mark dependencies met %v", err)
-		return err
+		return errEmptyReliabilityManager
 	}
 
 	if len(messageIDs) == 0 {
@@ -399,24 +392,20 @@ func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channe
 	wg.Wait()
 
 	if C.getRet(resp) == C.RET_OK {
-		Debug("Successfully marked dependencies as met")
+		rm.logger.Debug("successfully marked dependencies as met")
 		return nil
 	}
 
 	errMsg := "error MarkDependenciesMet: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	Error("Failed to mark dependencies as met: %v", errMsg)
-
 	return errors.New(errMsg)
 }
 
 func (rm *ReliabilityManager) StartPeriodicTasks() error {
 	if rm == nil {
-		err := errors.New("reliability manager is nil in StartPeriodicTasks")
-		Error("Failed to start periodic tasks %v", err)
-		return err
+		return errEmptyReliabilityManager
 	}
 
-	Debug("Starting periodic tasks")
+	rm.logger.Debug("starting periodic tasks")
 
 	wg := sync.WaitGroup{}
 	var resp = C.allocResp(unsafe.Pointer(&wg))
@@ -427,12 +416,10 @@ func (rm *ReliabilityManager) StartPeriodicTasks() error {
 	wg.Wait()
 
 	if C.getRet(resp) == C.RET_OK {
-		Debug("Successfully started periodic tasks")
+		rm.logger.Debug("successfully started periodic tasks")
 		return nil
 	}
 
 	errMsg := "error StartPeriodicTasks: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	Error("Failed to start periodic tasks: %v", errMsg)
-
 	return errors.New(errMsg)
 }
