@@ -2,7 +2,11 @@
 
 package sds
 
-import "errors"
+import (
+	"errors"
+
+	"go.uber.org/zap"
+)
 
 // This file provides lint-only stubs that avoid requiring libsds.h/cgo
 // so linters can analyze this package without native dependencies.
@@ -11,8 +15,8 @@ import "errors"
 var ErrLintBuild = errors.New("sds: lint-only build stub: native libsds not linked")
 
 // NewReliabilityManager returns an error in lint builds.
-func NewReliabilityManager() (*ReliabilityManager, error) {
-    return nil, ErrLintBuild
+func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
+	return nil, ErrLintBuild
 }
 
 // Cleanup returns an error in lint builds.
@@ -23,16 +27,18 @@ func (rm *ReliabilityManager) Reset() error { return ErrLintBuild }
 
 // WrapOutgoingMessage returns an error in lint builds.
 func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId MessageID, channelId string) ([]byte, error) {
-    return nil, ErrLintBuild
+	return nil, ErrLintBuild
 }
 
 // UnwrapReceivedMessage returns an error in lint builds.
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {
-    return nil, ErrLintBuild
+	return nil, ErrLintBuild
 }
 
 // MarkDependenciesMet returns an error in lint builds.
-func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channelId string) error { return ErrLintBuild }
+func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channelId string) error {
+	return ErrLintBuild
+}
 
 // StartPeriodicTasks returns an error in lint builds.
 func (rm *ReliabilityManager) StartPeriodicTasks() error { return ErrLintBuild }

@@ -137,8 +137,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"go.uber.org/zap"
 	errorspkg "github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 var (
