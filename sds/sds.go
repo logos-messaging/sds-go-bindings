@@ -175,7 +175,6 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 
 	if C.getRet(resp) != C.RET_OK {
 		errMsg := C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-		Error("error NewReliabilityManager: %v", errMsg)
 		return nil, errors.New(errMsg)
 	}
 
