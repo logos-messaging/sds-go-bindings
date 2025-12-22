@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"time"
 	"unsafe"
+
+	"go.uber.org/zap"
 )
 
 const requestTimeout = 30 * time.Second
@@ -18,6 +20,7 @@ type EventCallbacks struct {
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
 type ReliabilityManager struct {
+	logger    *zap.Logger
 	rmCtx     unsafe.Pointer
 	callbacks EventCallbacks
 }
@@ -67,7 +70,7 @@ func (rm *ReliabilityManager) OnEvent(eventStr string) {
 	jsonEvent := jsonEvent{}
 	err := json.Unmarshal([]byte(eventStr), &jsonEvent)
 	if err != nil {
-		Error("could not unmarshal sds event string: %v", err)
+		rm.logger.Error("failed to unmarshal sds event string", zap.Error(err))
 		return
 	}
 
@@ -85,11 +88,17 @@ func (rm *ReliabilityManager) OnEvent(eventStr string) {
 	}
 }
 
+func (rm *ReliabilityManager) OnCallbackError(callerRet int, err string) {
+	rm.logger.Error("sds callback error",
+		zap.Int("retCode", callerRet),
+		zap.String("errMsg", err))
+}
+
 func (rm *ReliabilityManager) parseMessageReadyEvent(eventStr string) {
 	msgEvent := msgEvent{}
 	err := json.Unmarshal([]byte(eventStr), &msgEvent)
 	if err != nil {
-		Error("could not parse message ready event %v", err)
+		rm.logger.Error("failed to parse message ready event", zap.Error(err))
 	}
 
 	if rm.callbacks.OnMessageReady != nil {
@@ -101,7 +110,8 @@ func (rm *ReliabilityManager) parseMessageSentEvent(eventStr string) {
 	msgEvent := msgEvent{}
 	err := json.Unmarshal([]byte(eventStr), &msgEvent)
 	if err != nil {
-		Error("could not parse message sent event %v", err)
+		rm.logger.Error("failed to parse message sent event", zap.Error(err))
+		return
 	}
 
 	if rm.callbacks.OnMessageSent != nil {
@@ -113,7 +123,8 @@ func (rm *ReliabilityManager) parseMissingDepsEvent(eventStr string) {
 	missingDepsEvent := missingDepsEvent{}
 	err := json.Unmarshal([]byte(eventStr), &missingDepsEvent)
 	if err != nil {
-		Error("could not parse missing dependencies event %v", err)
+		rm.logger.Error("failed to parse missing dependencies event", zap.Error(err))
+		return
 	}
 
 	if rm.callbacks.OnMissingDependencies != nil {
