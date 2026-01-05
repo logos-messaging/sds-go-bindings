@@ -9,6 +9,8 @@ package sds
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, void* userData);
 
+	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, void* userData);
+
 	typedef struct {
 		int ret;
 		char* msg;
@@ -75,6 +77,10 @@ package sds
 		// This technique is needed because cgo only allows to export Go functions and not methods.
 
 		SdsSetEventCallback(rmCtx, (SdsCallBack) sdsGlobalEventCallback, rmCtx);
+	}
+
+	static void cGoSdsSetRetrievalHintProvider(void* rmCtx) {
+		SdsSetRetrievalHintProvider(rmCtx, (SdsRetrievalHintProvider) sdsGlobalRetrievalHintProvider, rmCtx);
 	}
 
 	static void cGoSdsCleanupReliabilityManager(void* rmCtx, void* resp) {
@@ -184,6 +190,7 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 
 	C.cGoSdsSetEventCallback(rm.rmCtx)
 	registerReliabilityManager(rm)
+	C.cGoSdsSetRetrievalHintProvider(rm.rmCtx)
 
 	rm.logger.Debug("successfully created reliability manager")
 	return rm, nil
@@ -201,6 +208,25 @@ func sdsGlobalEventCallback(callerRet C.int, msg *C.char, len C.size_t, userData
 		rm.OnEvent(msgStr)
 	} else {
 		rm.OnCallbackError(int(callerRet), msgStr)
+	}
+}
+
+//export sdsGlobalRetrievalHintProvider
+func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C.size_t, userData unsafe.Pointer) {
+	msgId := C.GoString(messageId)
+	Debug("sdsGlobalRetrievalHintProvider called for messageId: %s", msgId)
+	rm, ok := rmRegistry[userData]
+	if ok && rm.callbacks.RetrievalHintProvider != nil {
+		Debug("Found RM and callback, calling provider")
+		hintBytes := rm.callbacks.RetrievalHintProvider(MessageID(msgId))
+		Debug("Provider returned hint of length: %d", len(hintBytes))
+		if len(hintBytes) > 0 {
+			*hint = (*C.char)(C.CBytes(hintBytes))
+			*hintLen = C.size_t(len(hintBytes))
+			Debug("Set hint in C memory: %s", string(hintBytes))
+		}
+	} else {
+		Debug("No RM found or no callback registered")
 	}
 }
 
@@ -340,7 +366,8 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 		}
 		rm.logger.Debug("successfully unwrapped message")
 
-		unwrappedMessage := UnwrappedMessage{}
+		Debug("Unwrapped message JSON: %s", resStr)
+		var unwrappedMessage UnwrappedMessage
 		err := json.Unmarshal([]byte(resStr), &unwrappedMessage)
 		if err != nil {
 			return nil, errorspkg.Wrap(err, "failed to unmarshal unwrapped message")
