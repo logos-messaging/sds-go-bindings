@@ -128,6 +128,10 @@ package sds
 		SdsStartPeriodicTasks(rmCtx, (SdsCallBack) SdsGoCallback, resp);
 	}
 
+	static int cGoSdsSetLogFile(const char* logFilePath) {
+		return SdsSetLogFile(logFilePath);
+	}
+
 */
 import "C"
 import (
@@ -138,6 +142,7 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+	"os"
 )
 
 const requestTimeout = 30 * time.Second
@@ -559,4 +564,26 @@ func (rm *ReliabilityManager) StartPeriodicTasks() error {
 	Error("Failed to start periodic tasks: %v", errMsg)
 
 	return errors.New(errMsg)
+}
+
+// SetLogFile configures the log file path for nim-sds logging
+// This allows status-go to specify where nim-sds should write its logs
+func SetLogFile(logFilePath string) error {
+	if logFilePath == "" {
+		return errors.New("log file path cannot be empty")
+	}
+
+	cLogFilePath := C.CString(logFilePath)
+	defer C.free(unsafe.Pointer(cLogFilePath))
+
+	result := C.cGoSdsSetLogFile(cLogFilePath)
+	if result != C.RET_OK {
+		return errors.New("failed to set log file path")
+	}
+
+	// Set environment variable for nim-sds to use
+	os.Setenv("SDS_LOG_FILE", logFilePath)
+
+	Debug("Successfully set nim-sds log file path to: %s", logFilePath)
+	return nil
 }

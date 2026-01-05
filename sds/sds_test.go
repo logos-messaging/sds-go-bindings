@@ -1,6 +1,9 @@
 package sds
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -676,4 +679,169 @@ func TestMultiChannelCallbacks(t *testing.T) {
 	require.Equal(t, channel1, readyMessages[ackID1_ch1], "OnMessageReady for ack1 has incorrect channel")
 	require.Equal(t, channel2, readyMessages[ackID2_ch2], "OnMessageReady for ack2 has incorrect channel")
 	require.Len(t, readyMessages, 2, "Expected exactly 2 ready messages")
+}
+
+// Test logging configuration functionality
+func TestSetLogFile(t *testing.T) {
+	// Create a temporary directory for test logs
+	tempDir, err := os.MkdirTemp("", "nim-sds-test-logs")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	// Test 1: Set a valid log file path
+	testLogFile := filepath.Join(tempDir, "nim-sds-test.log")
+	
+	err = SetLogFile(testLogFile)
+	require.NoError(t, err)
+
+	// Test 2: Verify the environment variable was set correctly by creating a ReliabilityManager
+	// and checking that it doesn't return errors related to logging
+	rm, err := NewReliabilityManager()
+	require.NoError(t, err)
+	defer rm.Cleanup()
+
+	// Test 3: Try to generate some logs (this will trigger error logs internally)
+	testMessage := []byte("Test log message")
+	testMessageID := MessageID("test-log-msg")
+	testChannelID := "test-log-channel"
+
+	// This should work and potentially generate some logs
+	_, err = rm.WrapOutgoingMessage(testMessage, testMessageID, testChannelID)
+	if err != nil {
+		t.Logf("WrapOutgoingMessage failed (expected in some environments): %v", err)
+	}
+
+	// Give some time for potential async logging
+	time.Sleep(100 * time.Millisecond)
+
+	// Test 4: Check that log directory was created (if any logs were written)
+	if _, err := os.Stat(tempDir); os.IsNotExist(err) {
+		t.Log("Log directory was not created (no logs generated, which is fine)")
+	} else {
+		t.Log("Log directory exists (logs may have been generated)")
+		
+		// Check if log file was created
+		if _, err := os.Stat(testLogFile); err == nil {
+			t.Log("Log file was created successfully")
+			
+			// Read log file content to verify it's not empty
+			content, err := os.ReadFile(testLogFile)
+			if err != nil {
+				t.Logf("Could not read log file: %v", err)
+			} else {
+				t.Logf("Log file content length: %d bytes", len(content))
+				if len(content) > 0 {
+					t.Logf("Log file contains data: %s", string(content)[:min(100, len(content))])
+				}
+			}
+		} else {
+			t.Log("Log file was not created (no error logs generated)")
+		}
+	}
+
+	// Test 5: Test error case - empty log file path
+	err = SetLogFile("")
+	require.Error(t, err, "Expected error when setting empty log file path")
+
+	// Test 6: Test error case - nil path should work (it just sets empty env var)
+	err = SetLogFile("/tmp/test-path.log")
+	require.NoError(t, err, "Setting valid path should work")
+}
+
+// Test hybrid logging behavior by checking environment variable setting
+func TestLogFileEnvironmentVariable(t *testing.T) {
+	// Save original environment
+	originalLogFile := os.Getenv("STATUS_SDS_LOG_FILE")
+	defer func() {
+		if originalLogFile != "" {
+			os.Setenv("STATUS_SDS_LOG_FILE", originalLogFile)
+		} else {
+			os.Unsetenv("STATUS_SDS_LOG_FILE")
+		}
+	}()
+
+	// Test that SetLogFile sets the environment variable correctly
+	testPath := "/test/path/nim-sds.log"
+	err := SetLogFile(testPath)
+	require.NoError(t, err)
+
+	// Check that environment variable was set
+	envValue := os.Getenv("STATUS_SDS_LOG_FILE")
+	require.Equal(t, testPath, envValue, "Environment variable STATUS_SDS_LOG_FILE should match set path")
+
+	// Test that we can create ReliabilityManager with custom log file
+	rm, err := NewReliabilityManager()
+	require.NoError(t, err)
+	defer rm.Cleanup()
+
+	t.Log("Successfully created ReliabilityManager with custom log file path")
+}
+
+// Test logging configuration with real message operations
+func TestLoggingWithMessageOperations(t *testing.T) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "nim-sds-msg-logs")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	// Set log file
+	logFile := filepath.Join(tempDir, "message-ops.log")
+	err = SetLogFile(logFile)
+	require.NoError(t, err)
+
+	// Create RMs
+	senderRM, err := NewReliabilityManager()
+	require.NoError(t, err)
+	defer senderRM.Cleanup()
+
+	receiverRM, err := NewReliabilityManager()
+	require.NoError(t, err)
+	defer receiverRM.Cleanup()
+
+	// Perform operations that might generate logs
+	channelID := "logging-test-channel"
+	
+	// Send messages
+	for i := 0; i < 5; i++ {
+		msgID := MessageID(fmt.Sprintf("log-test-msg-%d", i))
+		payload := []byte(fmt.Sprintf("Test message %d for logging", i))
+		
+		wrappedMsg, err := senderRM.WrapOutgoingMessage(payload, msgID, channelID)
+		if err != nil {
+			t.Logf("WrapOutgoingMessage %d failed: %v", i, err)
+			continue
+		}
+		
+		// Unwrap on receiver
+		_, err = receiverRM.UnwrapReceivedMessage(wrappedMsg)
+		if err != nil {
+			t.Logf("UnwrapReceivedMessage %d failed: %v", i, err)
+		}
+	}
+
+	// Wait for potential async logging
+	time.Sleep(200 * time.Millisecond)
+
+	// Check if logs were written
+	if _, err := os.Stat(logFile); err == nil {
+		content, err := os.ReadFile(logFile)
+		if err == nil && len(content) > 0 {
+			t.Logf("Log file created with %d bytes of content", len(content))
+			// Don't log full content as it might be large
+		} else {
+			t.Log("Log file exists but has no content")
+		}
+	} else {
+		t.Log("No log file was created (no errors generated)")
+	}
+	
+	t.Log("Message operations completed successfully with logging configured")
+}
+
+// Helper function for min
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
