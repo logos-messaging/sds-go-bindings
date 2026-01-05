@@ -14,8 +14,9 @@ const EventChanBufferSize = 1024
 type EventCallbacks struct {
 	OnMessageReady        func(messageId MessageID, channelId string)
 	OnMessageSent         func(messageId MessageID, channelId string)
-	OnMissingDependencies func(messageId MessageID, missingDeps []MessageID, channelId string)
+	OnMissingDependencies func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
 	OnPeriodicSync        func()
+	RetrievalHintProvider func(messageId MessageID) []byte
 }
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
@@ -58,8 +59,8 @@ type msgEvent struct {
 
 type missingDepsEvent struct {
 	MessageId   MessageID   `json:"messageId"`
-	MissingDeps []MessageID `json:"missingDeps"`
-	ChannelId   string      `json:"channelId"`
+	MissingDeps []HistoryEntry `json:"missingDeps"`
+	ChannelId   string         `json:"channelId"`
 }
 
 func (rm *ReliabilityManager) RegisterCallbacks(callbacks EventCallbacks) {

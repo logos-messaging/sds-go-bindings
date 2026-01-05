@@ -80,7 +80,7 @@ func TestDependencies(t *testing.T) {
 
 	foundDep1 := false
 	for _, dep := range *unwrappedMessage2.MissingDeps {
-		if dep == msgID1 {
+		if dep.MessageID == msgID1 {
 			foundDep1 = true
 			break
 		}
@@ -239,12 +239,15 @@ func TestCallback_OnMissingDependencies(t *testing.T) {
 	var cbMutex sync.Mutex
 
 	callbacks := EventCallbacks{
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			require.Equal(t, channelID, chId)
 			cbMutex.Lock()
 			missingCalled = true
 			missingMsgID = messageId
-			missingDepsList = missingDeps // Copy slice
+			missingDepsList = make([]MessageID, len(missingDeps))
+			for i, dep := range missingDeps {
+				missingDepsList[i] = dep.MessageID
+			}
 			cbMutex.Unlock()
 			wg.Done()
 		},
@@ -383,7 +386,7 @@ func TestCallbacks_Combined(t *testing.T) {
 			// are typically relevant to the Sender. We don't expect this.
 			t.Errorf("Unexpected OnMessageSent call on Receiver for %s", messageId)
 		},
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			// This callback is registered on Receiver, used for receiverRm2 below
 		},
 	}
@@ -404,7 +407,7 @@ func TestCallbacks_Combined(t *testing.T) {
 				}
 			}
 		},
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			// Not expected on sender
 		},
 	}
@@ -447,11 +450,16 @@ func TestCallbacks_Combined(t *testing.T) {
 	defer receiverRm2.Cleanup()
 
 	callbacksReceiver2 := EventCallbacks{
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			require.Equal(t, channelID, chId)
 			if messageId == msgID3 {
+				// Convert []HistoryEntry to []MessageID for the channel
+				deps := make([]MessageID, len(missingDeps))
+				for i, d := range missingDeps {
+					deps[i] = d.MessageID
+				}
 				select {
-				case missingChan <- missingDeps:
+				case missingChan <- deps:
 				default:
 				}
 			}
@@ -676,4 +684,62 @@ func TestMultiChannelCallbacks(t *testing.T) {
 	require.Equal(t, channel1, readyMessages[ackID1_ch1], "OnMessageReady for ack1 has incorrect channel")
 	require.Equal(t, channel2, readyMessages[ackID2_ch2], "OnMessageReady for ack2 has incorrect channel")
 	require.Len(t, readyMessages, 2, "Expected exactly 2 ready messages")
+}
+
+func TestRetrievalHints(t *testing.T) {
+	rm, err := NewReliabilityManager()
+	require.NoError(t, err)
+	defer rm.Cleanup()
+
+	channelID := "test-retrieval-hints"
+
+	// Set a retrieval hint provider
+	rm.RegisterCallbacks(EventCallbacks{
+		RetrievalHintProvider: func(messageId MessageID) []byte {
+			return []byte("hint-for-" + messageId)
+		},
+	})
+
+	// 1. Send a message to populate the history
+	payload1 := []byte("message one")
+	msgID1 := MessageID("msg-hint-1")
+	wrappedMsg1, err := rm.WrapOutgoingMessage(payload1, msgID1, channelID)
+	require.NoError(t, err)
+
+	// 2. Receive the message to add it to history
+	_, err = rm.UnwrapReceivedMessage(wrappedMsg1)
+	require.NoError(t, err)
+
+	// 3. Send a second message, which will include the first in its causal history
+	payload2 := []byte("message two")
+	msgID2 := MessageID("msg-hint-2")
+	wrappedMsg2, err := rm.WrapOutgoingMessage(payload2, msgID2, channelID)
+	require.NoError(t, err)
+
+	// 4. Unwrap the second message to inspect its causal history
+	// We need a new RM to avoid acknowledging the message
+	rm2, err := NewReliabilityManager()
+	require.NoError(t, err)
+	defer rm2.Cleanup()
+
+	rm2.RegisterCallbacks(EventCallbacks{
+		RetrievalHintProvider: func(messageId MessageID) []byte {
+			return []byte("hint-for-" + messageId)
+		},
+	})
+
+	unwrappedMsg2, err := rm2.UnwrapReceivedMessage(wrappedMsg2)
+	require.NoError(t, err)
+
+	// 5. Check that the causal history contains the retrieval hint
+	require.Greater(t, len(*unwrappedMsg2.MissingDeps), 0, "Expected missing dependencies")
+	foundDep := false
+	for _, dep := range *unwrappedMsg2.MissingDeps {
+		if dep.MessageID == msgID1 {
+			foundDep = true
+			require.Equal(t, []byte("hint-for-"+msgID1), dep.RetrievalHint, "Retrieval hint does not match")
+			break
+		}
+	}
+	require.True(t, foundDep, "Expected to find dependency %s", msgID1)
 }
