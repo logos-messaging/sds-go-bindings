@@ -216,17 +216,14 @@ func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C
 	msgId := C.GoString(messageId)
 	Debug("sdsGlobalRetrievalHintProvider called for messageId: %s", msgId)
 	rm, ok := rmRegistry[userData]
-	if ok && rm.callbacks.RetrievalHintProvider != nil {
-		Debug("Found RM and callback, calling provider")
-		hintBytes := rm.callbacks.RetrievalHintProvider(MessageID(msgId))
-		Debug("Provider returned hint of length: %d", len(hintBytes))
-		if len(hintBytes) > 0 {
-			*hint = (*C.char)(C.CBytes(hintBytes))
-			*hintLen = C.size_t(len(hintBytes))
-			Debug("Set hint in C memory: %s", string(hintBytes))
+	if ok {
+		if rm.callbacks.RetrievalHintProvider != nil {
+			hintBytes := rm.callbacks.RetrievalHintProvider(MessageID(msgId))
+			if len(hintBytes) > 0 {
+				*hint = (*C.char)(C.CBytes(hintBytes))
+				*hintLen = C.size_t(len(hintBytes))
+			}
 		}
-	} else {
-		Debug("No RM found or no callback registered")
 	}
 }
 
