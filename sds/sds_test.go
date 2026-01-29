@@ -10,7 +10,7 @@ import (
 
 // Test basic creation, cleanup, and reset
 func TestLifecycle(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	require.NotNil(t, rm, "Expected ReliabilityManager to be not nil")
 
@@ -22,7 +22,7 @@ func TestLifecycle(t *testing.T) {
 
 // Test wrapping and unwrapping a simple message
 func TestWrapUnwrap(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -45,7 +45,7 @@ func TestWrapUnwrap(t *testing.T) {
 
 // Test dependency handling
 func TestDependencies(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -68,7 +68,7 @@ func TestDependencies(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Create a new manager to simulate a different peer receiving msg2 without msg1
-	rm2, err := NewReliabilityManager()
+	rm2, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm2.Cleanup()
 
@@ -80,7 +80,7 @@ func TestDependencies(t *testing.T) {
 
 	foundDep1 := false
 	for _, dep := range *unwrappedMessage2.MissingDeps {
-		if dep == msgID1 {
+		if dep.MessageID == msgID1 {
 			foundDep1 = true
 			break
 		}
@@ -95,11 +95,11 @@ func TestDependencies(t *testing.T) {
 // Test OnMessageReady callback
 func TestCallback_OnMessageReady(t *testing.T) {
 	// Create sender and receiver RMs
-	senderRm, err := NewReliabilityManager()
+	senderRm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer senderRm.Cleanup()
 
-	receiverRm, err := NewReliabilityManager()
+	receiverRm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer receiverRm.Cleanup()
 
@@ -151,11 +151,11 @@ func TestCallback_OnMessageReady(t *testing.T) {
 // Test OnMessageSent callback (via causal history ACK)
 func TestCallback_OnMessageSent(t *testing.T) {
 	// Create two RMs
-	rm1, err := NewReliabilityManager()
+	rm1, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm1.Cleanup()
 
-	rm2, err := NewReliabilityManager()
+	rm2, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm2.Cleanup()
 
@@ -222,11 +222,11 @@ func TestCallback_OnMessageSent(t *testing.T) {
 // Test OnMissingDependencies callback
 func TestCallback_OnMissingDependencies(t *testing.T) {
 	// Use separate sender/receiver RMs explicitly
-	senderRm, err := NewReliabilityManager()
+	senderRm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer senderRm.Cleanup()
 
-	receiverRm, err := NewReliabilityManager()
+	receiverRm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer receiverRm.Cleanup()
 
@@ -239,12 +239,15 @@ func TestCallback_OnMissingDependencies(t *testing.T) {
 	var cbMutex sync.Mutex
 
 	callbacks := EventCallbacks{
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			require.Equal(t, channelID, chId)
 			cbMutex.Lock()
 			missingCalled = true
 			missingMsgID = messageId
-			missingDepsList = missingDeps // Copy slice
+			missingDepsList = make([]MessageID, len(missingDeps))
+			for i, dep := range missingDeps {
+				missingDepsList[i] = dep.MessageID
+			}
 			cbMutex.Unlock()
 			wg.Done()
 		},
@@ -298,7 +301,7 @@ func TestCallback_OnMissingDependencies(t *testing.T) {
 
 // Test OnPeriodicSync callback
 func TestCallback_OnPeriodicSync(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -344,11 +347,11 @@ func TestCallback_OnPeriodicSync(t *testing.T) {
 // Combined Test for multiple callbacks
 func TestCallbacks_Combined(t *testing.T) {
 	// Create sender and receiver RMs
-	senderRm, err := NewReliabilityManager()
+	senderRm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer senderRm.Cleanup()
 
-	receiverRm, err := NewReliabilityManager()
+	receiverRm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer receiverRm.Cleanup()
 
@@ -383,7 +386,7 @@ func TestCallbacks_Combined(t *testing.T) {
 			// are typically relevant to the Sender. We don't expect this.
 			t.Errorf("Unexpected OnMessageSent call on Receiver for %s", messageId)
 		},
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			// This callback is registered on Receiver, used for receiverRm2 below
 		},
 	}
@@ -404,7 +407,7 @@ func TestCallbacks_Combined(t *testing.T) {
 				}
 			}
 		},
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			// Not expected on sender
 		},
 	}
@@ -442,16 +445,21 @@ func TestCallbacks_Combined(t *testing.T) {
 	require.NoError(t, err)
 
 	// 6. Create Receiver2, register missing deps callback
-	receiverRm2, err := NewReliabilityManager()
+	receiverRm2, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer receiverRm2.Cleanup()
 
 	callbacksReceiver2 := EventCallbacks{
-		OnMissingDependencies: func(messageId MessageID, missingDeps []MessageID, chId string) {
+		OnMissingDependencies: func(messageId MessageID, missingDeps []HistoryEntry, chId string) {
 			require.Equal(t, channelID, chId)
 			if messageId == msgID3 {
+				// Convert []HistoryEntry to []MessageID for the channel
+				deps := make([]MessageID, len(missingDeps))
+				for i, d := range missingDeps {
+					deps[i] = d.MessageID
+				}
 				select {
-				case missingChan <- missingDeps:
+				case missingChan <- deps:
 				default:
 				}
 			}
@@ -545,7 +553,7 @@ func waitTimeout(wg *sync.WaitGroup, timeout time.Duration, t *testing.T) {
 
 // Test multi-channel functionality - one RM can handle messages from different channels
 func TestMultiChannel_SingleRM(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -592,12 +600,12 @@ func TestMultiChannel_SingleRM(t *testing.T) {
 // Test that callbacks are correctly triggered for multiple channels
 func TestMultiChannelCallbacks(t *testing.T) {
 	// rm1 is the manager we are testing callbacks on
-	rm1, err := NewReliabilityManager()
+	rm1, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm1.Cleanup()
 
 	// rm2 simulates another peer
-	rm2, err := NewReliabilityManager()
+	rm2, err := NewReliabilityManager(nil)
 	require.NoError(t, err)
 	defer rm2.Cleanup()
 
@@ -676,4 +684,62 @@ func TestMultiChannelCallbacks(t *testing.T) {
 	require.Equal(t, channel1, readyMessages[ackID1_ch1], "OnMessageReady for ack1 has incorrect channel")
 	require.Equal(t, channel2, readyMessages[ackID2_ch2], "OnMessageReady for ack2 has incorrect channel")
 	require.Len(t, readyMessages, 2, "Expected exactly 2 ready messages")
+}
+
+func TestRetrievalHints(t *testing.T) {
+	rm, err := NewReliabilityManager(nil)
+	require.NoError(t, err)
+	defer rm.Cleanup()
+
+	channelID := "test-retrieval-hints"
+
+	// Set a retrieval hint provider
+	rm.RegisterCallbacks(EventCallbacks{
+		RetrievalHintProvider: func(messageId MessageID) []byte {
+			return []byte("hint-for-" + messageId)
+		},
+	})
+
+	// 1. Send a message to populate the history
+	payload1 := []byte("message one")
+	msgID1 := MessageID("msg-hint-1")
+	wrappedMsg1, err := rm.WrapOutgoingMessage(payload1, msgID1, channelID)
+	require.NoError(t, err)
+
+	// 2. Receive the message to add it to history
+	_, err = rm.UnwrapReceivedMessage(wrappedMsg1)
+	require.NoError(t, err)
+
+	// 3. Send a second message, which will include the first in its causal history
+	payload2 := []byte("message two")
+	msgID2 := MessageID("msg-hint-2")
+	wrappedMsg2, err := rm.WrapOutgoingMessage(payload2, msgID2, channelID)
+	require.NoError(t, err)
+
+	// 4. Unwrap the second message to inspect its causal history
+	// We need a new RM to avoid acknowledging the message
+	rm2, err := NewReliabilityManager(nil)
+	require.NoError(t, err)
+	defer rm2.Cleanup()
+
+	rm2.RegisterCallbacks(EventCallbacks{
+		RetrievalHintProvider: func(messageId MessageID) []byte {
+			return []byte("hint-for-" + messageId)
+		},
+	})
+
+	unwrappedMsg2, err := rm2.UnwrapReceivedMessage(wrappedMsg2)
+	require.NoError(t, err)
+
+	// 5. Check that the causal history contains the retrieval hint
+	require.Greater(t, len(*unwrappedMsg2.MissingDeps), 0, "Expected missing dependencies")
+	foundDep := false
+	for _, dep := range *unwrappedMsg2.MissingDeps {
+		if dep.MessageID == msgID1 {
+			foundDep = true
+			require.Equal(t, []byte("hint-for-"+msgID1), dep.RetrievalHint, "Retrieval hint does not match")
+			break
+		}
+	}
+	require.True(t, foundDep, "Expected to find dependency %s", msgID1)
 }
