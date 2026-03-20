@@ -214,7 +214,6 @@ func sdsGlobalEventCallback(callerRet C.int, msg *C.char, len C.size_t, userData
 //export sdsGlobalRetrievalHintProvider
 func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C.size_t, userData unsafe.Pointer) {
 	msgId := C.GoString(messageId)
-	Debug("sdsGlobalRetrievalHintProvider called for messageId: %s", msgId)
 	rm, ok := rmRegistry[userData]
 	if ok {
 		if rm.callbacks.RetrievalHintProvider != nil {
@@ -363,7 +362,7 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 		}
 		rm.logger.Debug("successfully unwrapped message")
 
-		Debug("Unwrapped message JSON: %s", resStr)
+		rm.logger.Debug("Unwrapped message JSON: %s", resStr)
 		var unwrappedMessage UnwrappedMessage
 		err := json.Unmarshal([]byte(resStr), &unwrappedMessage)
 		if err != nil {
