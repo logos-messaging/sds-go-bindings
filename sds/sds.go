@@ -110,6 +110,8 @@ package sds
 */
 import "C"
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"unsafe"
@@ -130,6 +132,15 @@ var eventNames = []string{
 	eventMessageSent,
 	eventMissingDependencies,
 	eventPeriodicSync,
+}
+
+// randomParticipantID returns a random hex-encoded SDS-R participant identity.
+func randomParticipantID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 //export SdsGoCallback
@@ -199,12 +210,17 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 
 	rm.logger.Info("creating new reliability manager")
 
-	// Empty participantId keeps plain SDS (causal history, acks, missing-deps)
-	// and disables SDS-R repair — matching the pre-nim-ffi binding's behavior.
-	createReq := sdsCreateReq{Config: sdsConfig{ParticipantID: ""}}
+	// participantId is the per-manager SDS-R identity. A non-empty id enables
+	// SDS-R (repair/retrieval); we generate a random one so each manager has a
+	// distinct identity.
+	participantID, err := randomParticipantID()
+	if err != nil {
+		return nil, errorspkg.Wrap(err, "failed to generate participant id")
+	}
+	createReq := sdsCreateReq{Config: sdsConfig{ParticipantID: participantID}}
 
 	var ret int
-	err := withReqCbor(createReq, func(ptr unsafe.Pointer, length C.size_t) {
+	err = withReqCbor(createReq, func(ptr unsafe.Pointer, length C.size_t) {
 		var data []byte
 		ret, data = sdsCall(func(resp unsafe.Pointer) {
 			rm.rmCtx = C.cGoSdsCreate(ptr, length, resp)
