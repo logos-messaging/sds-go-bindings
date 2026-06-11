@@ -4,16 +4,22 @@ package sds
 
 /*
 	#include <libsds.h>
-	#include <stdio.h>
 	#include <stdlib.h>
+	#include <string.h>
 
+	// Event callback shared by all ReliabilityManager instances; userData carries
+	// the ctx handle so the Go side can route the event to the right manager.
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, void* userData);
+
+	// Result callback for synchronous request/response calls. `resp` is an
+	// SdsResp* that captures the return code and a copy of the CBOR payload.
+	void SdsGoCallback(int ret, char* msg, size_t len, void* resp);
 
 	typedef struct {
 		int ret;
-		char* msg;
+		char* msg;   // owned copy of the CBOR payload (freed by freeResp)
 		size_t len;
-		void* ffiWg;
+		void* ffiWg; // *sync.WaitGroup the caller blocks on
 	} SdsResp;
 
 	static void* allocResp(void* wg) {
@@ -24,8 +30,24 @@ package sds
 
 	static void freeResp(void* resp) {
 		if (resp != NULL) {
-			free(resp);
+			SdsResp* m = (SdsResp*) resp;
+			if (m->msg != NULL) {
+				free(m->msg);
+			}
+			free(m);
 		}
+	}
+
+	// Copy the callback payload into a buffer owned by resp. The libsds buffer is
+	// only valid for the duration of the callback, so we copy before returning.
+	static void setRespMsg(void* resp, const char* msg, size_t len) {
+		if (resp == NULL || msg == NULL || len == 0) {
+			return;
+		}
+		SdsResp* m = (SdsResp*) resp;
+		m->msg = (char*) malloc(len);
+		memcpy(m->msg, msg, len);
+		m->len = len;
 	}
 
 	static char* getMyCharPtr(void* resp) {
@@ -52,91 +74,47 @@ package sds
 		return m->ret;
 	}
 
-	// resp must be set != NULL in case interest on retrieving data from the callback
-	void SdsGoCallback(int ret, char* msg, size_t len, void* resp);
+	// --- Thin wrappers casting the Go-exported callbacks to SdsCallBack --------
 
-	static void* cGoSdsNewReliabilityManager(void* resp) {
-		// We pass NULL because we are not interested in retrieving data from this callback
-		void* ret = SdsNewReliabilityManager((SdsCallBack) SdsGoCallback, resp);
-		return ret;
+	static void* cGoSdsCreate(const void* reqCbor, size_t reqCborLen, void* resp) {
+		return sds_create((const uint8_t*) reqCbor, reqCborLen, (SdsCallBack) SdsGoCallback, resp);
 	}
 
-	static void cGoSdsSetEventCallback(void* rmCtx) {
-		// The 'sdsGlobalEventCallback' Go function is shared amongst all possible Reliability Manager instances.
-
-		// Given that the 'sdsGlobalEventCallback' is shared, we pass again the
-		// rmCtx instance but in this case is needed to pick up the correct method
-		// that will handle the event.
-
-		// In other words, for every call libsds makes to sdsGlobalEventCallback,
-		// the 'userData' parameter will bring the context of the rm that registered
-		// that sdsGlobalEventCallback.
-
-		// This technique is needed because cgo only allows to export Go functions and not methods.
-
-		SdsSetEventCallback(rmCtx, (SdsCallBack) sdsGlobalEventCallback, rmCtx);
+	static int cGoSdsDestroy(void* ctx) {
+		return sds_destroy(ctx);
 	}
 
-	static void cGoSdsCleanupReliabilityManager(void* rmCtx, void* resp) {
-		SdsCleanupReliabilityManager(rmCtx, (SdsCallBack) SdsGoCallback, resp);
+	static unsigned long long cGoSdsAddEventListener(void* ctx, const char* eventName) {
+		return sds_add_event_listener(ctx, eventName, (SdsCallBack) sdsGlobalEventCallback, ctx);
 	}
 
-	static void cGoSdsResetReliabilityManager(void* rmCtx, void* resp) {
-		SdsResetReliabilityManager(rmCtx, (SdsCallBack) SdsGoCallback, resp);
+	static int cGoSdsWrapOutgoingMessage(void* ctx, const void* reqCbor, size_t reqCborLen, void* resp) {
+		return sds_wrap_outgoing_message(ctx, (SdsCallBack) SdsGoCallback, resp, (const uint8_t*) reqCbor, reqCborLen);
 	}
 
-	static void cGoSdsWrapOutgoingMessage(void* rmCtx,
-					void* message,
-	                    		size_t messageLen,
-	                    		const char* messageId,
-				const char* channelId,
-				void* resp) {
-		SdsWrapOutgoingMessage(rmCtx,
-				message,
-				messageLen,
-				messageId,
-				channelId,
-				(SdsCallBack) SdsGoCallback,
-				resp);
-	}
-	static void cGoSdsUnwrapReceivedMessage(void* rmCtx,
-									void* message,
-                    				size_t messageLen,
-									void* resp) {
-		SdsUnwrapReceivedMessage(rmCtx,
-						message,
-						messageLen,
-						(SdsCallBack) SdsGoCallback,
-						resp);
+	static int cGoSdsUnwrapReceivedMessage(void* ctx, const void* reqCbor, size_t reqCborLen, void* resp) {
+		return sds_unwrap_received_message(ctx, (SdsCallBack) SdsGoCallback, resp, (const uint8_t*) reqCbor, reqCborLen);
 	}
 
-	static void cGoSdsMarkDependenciesMet(void* rmCtx,
-					char** messageIDs,
-	                    		size_t count,
-					const char* channelId,
-					void* resp) {
-		SdsMarkDependenciesMet(rmCtx,
-				messageIDs,
-				count,
-				channelId,
-				(SdsCallBack) SdsGoCallback,
-				resp);
+	static int cGoSdsMarkDependenciesMet(void* ctx, const void* reqCbor, size_t reqCborLen, void* resp) {
+		return sds_mark_dependencies_met(ctx, (SdsCallBack) SdsGoCallback, resp, (const uint8_t*) reqCbor, reqCborLen);
 	}
 
-	static void cGoSdsStartPeriodicTasks(void* rmCtx, void* resp) {
-		SdsStartPeriodicTasks(rmCtx, (SdsCallBack) SdsGoCallback, resp);
+	static int cGoSdsReset(void* ctx, const void* reqCbor, size_t reqCborLen, void* resp) {
+		return sds_reset(ctx, (SdsCallBack) SdsGoCallback, resp, (const uint8_t*) reqCbor, reqCborLen);
 	}
 
+	static int cGoSdsStartPeriodicTasks(void* ctx, const void* reqCbor, size_t reqCborLen, void* resp) {
+		return sds_start_periodic_tasks(ctx, (SdsCallBack) SdsGoCallback, resp, (const uint8_t*) reqCbor, reqCborLen);
+	}
 */
 import "C"
 import (
-	"encoding/json"
 	"errors"
-	"strconv"
-	"strings"
 	"sync"
 	"unsafe"
 
+	"github.com/fxamacker/cbor/v2"
 	errorspkg "github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -145,16 +123,69 @@ var (
 	errEmptyReliabilityManager = errors.New("empty reliability manager")
 )
 
+// eventNames are the libsds events we subscribe to. Each is registered with the
+// shared sdsGlobalEventCallback; the CBOR envelope carries the event type.
+var eventNames = []string{
+	eventMessageReady,
+	eventMessageSent,
+	eventMissingDependencies,
+	eventPeriodicSync,
+}
+
 //export SdsGoCallback
 func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
 	if resp != nil {
 		m := (*C.SdsResp)(resp)
 		m.ret = ret
-		m.msg = msg
-		m.len = len
+		// Copy the CBOR payload into resp-owned memory; the libsds buffer is only
+		// valid during this callback.
+		C.setRespMsg(resp, msg, len)
 		wg := (*sync.WaitGroup)(m.ffiWg)
 		wg.Done()
 	}
+}
+
+// call runs a libsds request that delivers its CBOR result through SdsGoCallback,
+// blocks until the callback fires, and returns the (copied) result bytes.
+func sdsCall(invoke func(resp unsafe.Pointer)) (int, []byte) {
+	wg := sync.WaitGroup{}
+	resp := C.allocResp(unsafe.Pointer(&wg))
+	defer C.freeResp(resp)
+
+	wg.Add(1)
+	invoke(resp)
+	wg.Wait()
+
+	ret := int(C.getRet(resp))
+	var data []byte
+	if n := C.getMyCharLen(resp); n > 0 {
+		data = C.GoBytes(unsafe.Pointer(C.getMyCharPtr(resp)), C.int(n))
+	}
+	return ret, data
+}
+
+func respError(prefix string, ret int, data []byte) error {
+	if len(data) > 0 {
+		// Error payloads from the FFI layer are plain UTF-8 strings, not CBOR.
+		return errors.New(prefix + ": " + string(data))
+	}
+	return errorspkg.Errorf("%s: ret code %d", prefix, ret)
+}
+
+// withReqCbor CBOR-encodes req and invokes fn with a pointer+len into the bytes,
+// keeping the buffer alive for the duration of the call.
+func withReqCbor(req interface{}, fn func(ptr unsafe.Pointer, length C.size_t)) error {
+	reqBytes, err := cbor.Marshal(req)
+	if err != nil {
+		return errorspkg.Wrap(err, "failed to CBOR-encode request")
+	}
+	var ptr unsafe.Pointer
+	if len(reqBytes) > 0 {
+		ptr = C.CBytes(reqBytes)
+		defer C.free(ptr)
+	}
+	fn(ptr, C.size_t(len(reqBytes)))
+	return nil
 }
 
 func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
@@ -168,21 +199,34 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 
 	rm.logger.Info("creating new reliability manager")
 
-	wg := sync.WaitGroup{}
+	// Empty participantId keeps plain SDS (causal history, acks, missing-deps)
+	// and disables SDS-R repair — matching the pre-nim-ffi binding's behavior.
+	createReq := sdsCreateReq{Config: sdsConfig{ParticipantID: ""}}
 
-	var resp = C.allocResp(unsafe.Pointer(&wg))
-	defer C.freeResp(resp)
-
-	if C.getRet(resp) != C.RET_OK {
-		errMsg := C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-		return nil, errors.New(errMsg)
+	var ret int
+	err := withReqCbor(createReq, func(ptr unsafe.Pointer, length C.size_t) {
+		var data []byte
+		ret, data = sdsCall(func(resp unsafe.Pointer) {
+			rm.rmCtx = C.cGoSdsCreate(ptr, length, resp)
+		})
+		_ = data // create returns the ctx via the C return value; payload unused
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rm.rmCtx == nil || ret != C.RET_OK {
+		return nil, errors.New("failed to create reliability manager")
 	}
 
-	wg.Add(1)
-	rm.rmCtx = C.cGoSdsNewReliabilityManager(resp)
-	wg.Wait()
+	for _, name := range eventNames {
+		cName := C.CString(name)
+		listenerID := C.cGoSdsAddEventListener(rm.rmCtx, cName)
+		C.free(unsafe.Pointer(cName))
+		if listenerID == 0 {
+			rm.logger.Warn("failed to subscribe to sds event", zap.String("event", name))
+		}
+	}
 
-	C.cGoSdsSetEventCallback(rm.rmCtx)
 	registerReliabilityManager(rm)
 
 	rm.logger.Debug("successfully created reliability manager")
@@ -191,16 +235,21 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 
 //export sdsGlobalEventCallback
 func sdsGlobalEventCallback(callerRet C.int, msg *C.char, len C.size_t, userData unsafe.Pointer) {
-	msgStr := C.GoStringN(msg, C.int(len))
-	rm, ok := rmRegistry[userData] // userData contains rm's ctx
+	// Copy the event bytes immediately; the libsds buffer is callback-scoped.
+	var eventCbor []byte
+	if len > 0 {
+		eventCbor = C.GoBytes(unsafe.Pointer(msg), C.int(len))
+	}
+
+	rm, ok := rmRegistry[userData] // userData carries the rm's ctx handle
 	if !ok {
 		return
 	}
 
 	if callerRet == C.RET_OK {
-		rm.OnEvent(msgStr)
+		rm.onEvent(eventCbor)
 	} else {
-		rm.OnCallbackError(int(callerRet), msgStr)
+		rm.OnCallbackError(int(callerRet), string(eventCbor))
 	}
 }
 
@@ -211,22 +260,14 @@ func (rm *ReliabilityManager) Cleanup() error {
 
 	rm.logger.Debug("cleaning up reliability manager")
 
-	wg := sync.WaitGroup{}
-	var resp = C.allocResp(unsafe.Pointer(&wg))
-	defer C.freeResp(resp)
-
-	wg.Add(1)
-	C.cGoSdsCleanupReliabilityManager(rm.rmCtx, resp)
-	wg.Wait()
-
-	if C.getRet(resp) == C.RET_OK {
-		unregisterReliabilityManager(rm)
-		rm.logger.Debug("cleaned up reliability manager")
-		return nil
+	ret := int(C.cGoSdsDestroy(rm.rmCtx))
+	if ret != C.RET_OK {
+		return errorspkg.Errorf("error CleanupReliabilityManager: ret code %d", ret)
 	}
 
-	errMsg := "error CleanupReliabilityManager: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	return errors.New(errMsg)
+	unregisterReliabilityManager(rm)
+	rm.logger.Debug("cleaned up reliability manager")
+	return nil
 }
 
 func (rm *ReliabilityManager) Reset() error {
@@ -236,21 +277,22 @@ func (rm *ReliabilityManager) Reset() error {
 
 	rm.logger.Debug("resetting reliability manager")
 
-	wg := sync.WaitGroup{}
-	var resp = C.allocResp(unsafe.Pointer(&wg))
-	defer C.freeResp(resp)
-
-	wg.Add(1)
-	C.cGoSdsResetReliabilityManager(rm.rmCtx, resp)
-	wg.Wait()
-
-	if C.getRet(resp) == C.RET_OK {
-		rm.logger.Debug("successfully resetted reliability manager")
-		return nil
+	var ret int
+	var data []byte
+	err := withReqCbor(sdsEmptyReq{}, func(ptr unsafe.Pointer, length C.size_t) {
+		ret, data = sdsCall(func(resp unsafe.Pointer) {
+			C.cGoSdsReset(rm.rmCtx, ptr, length, resp)
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if ret != C.RET_OK {
+		return respError("error ResetReliabilityManager", ret, data)
 	}
 
-	errMsg := "error ResetReliabilityManager: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	return errors.New(errMsg)
+	rm.logger.Debug("successfully resetted reliability manager")
+	return nil
 }
 
 func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId MessageID, channelId string) ([]byte, error) {
@@ -259,55 +301,35 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	}
 
 	logger := rm.logger.With(zap.String("messageId", string(messageId)))
-	logger.Debug("wrapping outgoing message", zap.String("messageId", string(messageId)))
+	logger.Debug("wrapping outgoing message")
 
-	wg := sync.WaitGroup{}
-	var resp = C.allocResp(unsafe.Pointer(&wg))
-	defer C.freeResp(resp)
+	req := sdsWrapReq{Req: sdsWrapRequest{
+		Message:   message,
+		MessageID: string(messageId),
+		ChannelID: channelId,
+	}}
 
-	cMessageId := C.CString(string(messageId))
-	defer C.free(unsafe.Pointer(cMessageId))
-
-	var cMessagePtr unsafe.Pointer
-	if len(message) > 0 {
-		cMessagePtr = C.CBytes(message) // C.CBytes allocates memory that needs to be freed
-		defer C.free(cMessagePtr)
-	} else {
-		cMessagePtr = nil
+	var ret int
+	var data []byte
+	err := withReqCbor(req, func(ptr unsafe.Pointer, length C.size_t) {
+		ret, data = sdsCall(func(resp unsafe.Pointer) {
+			C.cGoSdsWrapOutgoingMessage(rm.rmCtx, ptr, length, resp)
+		})
+	})
+	if err != nil {
+		return nil, err
 	}
-	cMessageLen := C.size_t(len(message))
-
-	cChannelId := C.CString(channelId)
-	defer C.free(unsafe.Pointer(cChannelId))
-
-	wg.Add(1)
-	C.cGoSdsWrapOutgoingMessage(rm.rmCtx, cMessagePtr, cMessageLen, cMessageId, cChannelId, resp)
-	wg.Wait()
-
-	if C.getRet(resp) == C.RET_OK {
-		resStr := C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-		if resStr == "" {
-			logger.Debug("received empty res string for messageId")
-			return nil, nil
-		}
-		logger.Debug("successfully wrapped message")
-
-		parts := strings.Split(resStr, ",")
-		bytes := make([]byte, len(parts))
-
-		for i, part := range parts {
-			n, err := strconv.Atoi(strings.TrimSpace(part))
-			if err != nil {
-				panic(err)
-			}
-			bytes[i] = byte(n)
-		}
-
-		return bytes, nil
+	if ret != C.RET_OK {
+		return nil, respError("error WrapOutgoingMessage", ret, data)
 	}
 
-	errMsg := "error WrapOutgoingMessage: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	return nil, errors.New(errMsg)
+	var wrapResp sdsWrapResponse
+	if err := cbor.Unmarshal(data, &wrapResp); err != nil {
+		return nil, errorspkg.Wrap(err, "failed to decode wrap response")
+	}
+
+	logger.Debug("successfully wrapped message")
+	return wrapResp.Message, nil
 }
 
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {
@@ -315,42 +337,41 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 		return nil, errEmptyReliabilityManager
 	}
 
-	wg := sync.WaitGroup{}
-	var resp = C.allocResp(unsafe.Pointer(&wg))
-	defer C.freeResp(resp)
+	req := sdsUnwrapReq{Req: sdsUnwrapRequest{Message: message}}
 
-	var cMessagePtr unsafe.Pointer
-	if len(message) > 0 {
-		cMessagePtr = C.CBytes(message) // C.CBytes allocates memory that needs to be freed
-		defer C.free(cMessagePtr)
-	} else {
-		cMessagePtr = nil
+	var ret int
+	var data []byte
+	err := withReqCbor(req, func(ptr unsafe.Pointer, length C.size_t) {
+		ret, data = sdsCall(func(resp unsafe.Pointer) {
+			C.cGoSdsUnwrapReceivedMessage(rm.rmCtx, ptr, length, resp)
+		})
+	})
+	if err != nil {
+		return nil, err
 	}
-	cMessageLen := C.size_t(len(message))
-
-	wg.Add(1)
-	C.cGoSdsUnwrapReceivedMessage(rm.rmCtx, cMessagePtr, cMessageLen, resp)
-	wg.Wait()
-
-	if C.getRet(resp) == C.RET_OK {
-		resStr := C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-		if resStr == "" {
-			rm.logger.Debug("received empty res string")
-			return nil, nil
-		}
-		rm.logger.Debug("successfully unwrapped message")
-
-		unwrappedMessage := UnwrappedMessage{}
-		err := json.Unmarshal([]byte(resStr), &unwrappedMessage)
-		if err != nil {
-			return nil, errorspkg.Wrap(err, "failed to unmarshal unwrapped message")
-		}
-
-		return &unwrappedMessage, nil
+	if ret != C.RET_OK {
+		return nil, respError("error UnwrapReceivedMessage", ret, data)
 	}
 
-	errMsg := "error UnwrapReceivedMessage: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	return nil, errors.New(errMsg)
+	var unwrapResp sdsUnwrapResponse
+	if err := cbor.Unmarshal(data, &unwrapResp); err != nil {
+		return nil, errorspkg.Wrap(err, "failed to decode unwrap response")
+	}
+
+	rm.logger.Debug("successfully unwrapped message")
+
+	msg := unwrapResp.Message
+	channelId := unwrapResp.ChannelID
+	missingDeps := make([]MessageID, len(unwrapResp.MissingDeps))
+	for i, dep := range unwrapResp.MissingDeps {
+		missingDeps[i] = MessageID(dep.MessageID)
+	}
+
+	return &UnwrappedMessage{
+		Message:     &msg,
+		MissingDeps: &missingDeps,
+		ChannelId:   &channelId,
+	}, nil
 }
 
 // MarkDependenciesMet informs the library that dependencies are met
@@ -363,40 +384,31 @@ func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channe
 		return nil // Nothing to do
 	}
 
-	wg := sync.WaitGroup{}
-	var resp = C.allocResp(unsafe.Pointer(&wg))
-	defer C.freeResp(resp)
-
-	// Convert Go string slice to C array of C strings (char**)
-	cMessageIDs := make([]*C.char, len(messageIDs))
+	ids := make([]string, len(messageIDs))
 	for i, id := range messageIDs {
-		cMessageIDs[i] = C.CString(string(id))
-		defer C.free(unsafe.Pointer(cMessageIDs[i])) // Ensure each CString is freed
+		ids[i] = string(id)
+	}
+	req := sdsMarkDependenciesReq{Req: sdsMarkDependenciesRequest{
+		MessageIDs: ids,
+		ChannelID:  channelId,
+	}}
+
+	var ret int
+	var data []byte
+	err := withReqCbor(req, func(ptr unsafe.Pointer, length C.size_t) {
+		ret, data = sdsCall(func(resp unsafe.Pointer) {
+			C.cGoSdsMarkDependenciesMet(rm.rmCtx, ptr, length, resp)
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if ret != C.RET_OK {
+		return respError("error MarkDependenciesMet", ret, data)
 	}
 
-	// Create a pointer (**C.char) to the first element of the slice
-	var cMessageIDsPtr **C.char
-	if len(cMessageIDs) > 0 {
-		cMessageIDsPtr = &cMessageIDs[0]
-	} else {
-		cMessageIDsPtr = nil // Handle empty slice case
-	}
-
-	wg.Add(1)
-	cChannelId := C.CString(channelId)
-	defer C.free(unsafe.Pointer(cChannelId))
-
-	// Pass the pointer variable (cMessageIDsPtr) directly, which is of type **C.char
-	C.cGoSdsMarkDependenciesMet(rm.rmCtx, cMessageIDsPtr, C.size_t(len(messageIDs)), cChannelId, resp)
-	wg.Wait()
-
-	if C.getRet(resp) == C.RET_OK {
-		rm.logger.Debug("successfully marked dependencies as met")
-		return nil
-	}
-
-	errMsg := "error MarkDependenciesMet: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	return errors.New(errMsg)
+	rm.logger.Debug("successfully marked dependencies as met")
+	return nil
 }
 
 func (rm *ReliabilityManager) StartPeriodicTasks() error {
@@ -406,19 +418,20 @@ func (rm *ReliabilityManager) StartPeriodicTasks() error {
 
 	rm.logger.Debug("starting periodic tasks")
 
-	wg := sync.WaitGroup{}
-	var resp = C.allocResp(unsafe.Pointer(&wg))
-	defer C.freeResp(resp)
-
-	wg.Add(1)
-	C.cGoSdsStartPeriodicTasks(rm.rmCtx, resp)
-	wg.Wait()
-
-	if C.getRet(resp) == C.RET_OK {
-		rm.logger.Debug("successfully started periodic tasks")
-		return nil
+	var ret int
+	var data []byte
+	err := withReqCbor(sdsEmptyReq{}, func(ptr unsafe.Pointer, length C.size_t) {
+		ret, data = sdsCall(func(resp unsafe.Pointer) {
+			C.cGoSdsStartPeriodicTasks(rm.rmCtx, ptr, length, resp)
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if ret != C.RET_OK {
+		return respError("error StartPeriodicTasks", ret, data)
 	}
 
-	errMsg := "error StartPeriodicTasks: " + C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
-	return errors.New(errMsg)
+	rm.logger.Debug("successfully started periodic tasks")
+	return nil
 }

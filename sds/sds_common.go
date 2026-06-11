@@ -1,10 +1,10 @@
 package sds
 
 import (
-	"encoding/json"
 	"time"
 	"unsafe"
 
+	"github.com/fxamacker/cbor/v2"
 	"go.uber.org/zap"
 )
 
@@ -47,41 +47,34 @@ func unregisterReliabilityManager(rm *ReliabilityManager) {
 	delete(rmRegistry, rm.rmCtx)
 }
 
-type jsonEvent struct {
-	EventType string `json:"eventType"`
-}
-
-type msgEvent struct {
-	MessageId MessageID `json:"messageId"`
-	ChannelId string    `json:"channelId"`
-}
-
-type missingDepsEvent struct {
-	MessageId   MessageID   `json:"messageId"`
-	MissingDeps []MessageID `json:"missingDeps"`
-	ChannelId   string      `json:"channelId"`
+// sdsEventEnvelope is the CBOR wrapper libsds emits for every event:
+// { eventType: <wire name>, payload: <event struct> }.
+type sdsEventEnvelope struct {
+	EventType string          `cbor:"eventType"`
+	Payload   cbor.RawMessage `cbor:"payload"`
 }
 
 func (rm *ReliabilityManager) RegisterCallbacks(callbacks EventCallbacks) {
 	rm.callbacks = callbacks
 }
 
-func (rm *ReliabilityManager) OnEvent(eventStr string) {
-	jsonEvent := jsonEvent{}
-	err := json.Unmarshal([]byte(eventStr), &jsonEvent)
-	if err != nil {
-		rm.logger.Error("failed to unmarshal sds event string", zap.Error(err))
+// onEvent decodes the CBOR event envelope and dispatches to the registered
+// typed callbacks.
+func (rm *ReliabilityManager) onEvent(eventCbor []byte) {
+	var env sdsEventEnvelope
+	if err := cbor.Unmarshal(eventCbor, &env); err != nil {
+		rm.logger.Error("failed to decode sds event envelope", zap.Error(err))
 		return
 	}
 
-	switch jsonEvent.EventType {
-	case "message_ready":
-		rm.parseMessageReadyEvent(eventStr)
-	case "message_sent":
-		rm.parseMessageSentEvent(eventStr)
-	case "missing_dependencies":
-		rm.parseMissingDepsEvent(eventStr)
-	case "periodic_sync":
+	switch env.EventType {
+	case eventMessageReady:
+		rm.dispatchMessageEvent(env.Payload, rm.callbacks.OnMessageReady)
+	case eventMessageSent:
+		rm.dispatchMessageEvent(env.Payload, rm.callbacks.OnMessageSent)
+	case eventMissingDependencies:
+		rm.dispatchMissingDepsEvent(env.Payload)
+	case eventPeriodicSync:
 		if rm.callbacks.OnPeriodicSync != nil {
 			rm.callbacks.OnPeriodicSync()
 		}
@@ -94,40 +87,30 @@ func (rm *ReliabilityManager) OnCallbackError(callerRet int, err string) {
 		zap.String("errMsg", err))
 }
 
-func (rm *ReliabilityManager) parseMessageReadyEvent(eventStr string) {
-	msgEvent := msgEvent{}
-	err := json.Unmarshal([]byte(eventStr), &msgEvent)
-	if err != nil {
-		rm.logger.Error("failed to parse message ready event", zap.Error(err))
-	}
-
-	if rm.callbacks.OnMessageReady != nil {
-		rm.callbacks.OnMessageReady(msgEvent.MessageId, msgEvent.ChannelId)
-	}
-}
-
-func (rm *ReliabilityManager) parseMessageSentEvent(eventStr string) {
-	msgEvent := msgEvent{}
-	err := json.Unmarshal([]byte(eventStr), &msgEvent)
-	if err != nil {
-		rm.logger.Error("failed to parse message sent event", zap.Error(err))
+func (rm *ReliabilityManager) dispatchMessageEvent(payload cbor.RawMessage, cb func(MessageID, string)) {
+	if cb == nil {
 		return
 	}
-
-	if rm.callbacks.OnMessageSent != nil {
-		rm.callbacks.OnMessageSent(msgEvent.MessageId, msgEvent.ChannelId)
-	}
-}
-
-func (rm *ReliabilityManager) parseMissingDepsEvent(eventStr string) {
-	missingDepsEvent := missingDepsEvent{}
-	err := json.Unmarshal([]byte(eventStr), &missingDepsEvent)
-	if err != nil {
-		rm.logger.Error("failed to parse missing dependencies event", zap.Error(err))
+	var p sdsMessageEventPayload
+	if err := cbor.Unmarshal(payload, &p); err != nil {
+		rm.logger.Error("failed to decode sds message event", zap.Error(err))
 		return
 	}
+	cb(MessageID(p.MessageID), p.ChannelID)
+}
 
-	if rm.callbacks.OnMissingDependencies != nil {
-		rm.callbacks.OnMissingDependencies(missingDepsEvent.MessageId, missingDepsEvent.MissingDeps, missingDepsEvent.ChannelId)
+func (rm *ReliabilityManager) dispatchMissingDepsEvent(payload cbor.RawMessage) {
+	if rm.callbacks.OnMissingDependencies == nil {
+		return
 	}
+	var p sdsMissingDependenciesPayload
+	if err := cbor.Unmarshal(payload, &p); err != nil {
+		rm.logger.Error("failed to decode sds missing dependencies event", zap.Error(err))
+		return
+	}
+	deps := make([]MessageID, len(p.MissingDeps))
+	for i, d := range p.MissingDeps {
+		deps[i] = MessageID(d.MessageID)
+	}
+	rm.callbacks.OnMissingDependencies(MessageID(p.MessageID), deps, p.ChannelID)
 }

@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // Test basic creation, cleanup, and reset
 func TestLifecycle(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	require.NotNil(t, rm, "Expected ReliabilityManager to be not nil")
 
@@ -22,7 +23,7 @@ func TestLifecycle(t *testing.T) {
 
 // Test wrapping and unwrapping a simple message
 func TestWrapUnwrap(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -45,7 +46,7 @@ func TestWrapUnwrap(t *testing.T) {
 
 // Test dependency handling
 func TestDependencies(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -68,7 +69,7 @@ func TestDependencies(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Create a new manager to simulate a different peer receiving msg2 without msg1
-	rm2, err := NewReliabilityManager()
+	rm2, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm2.Cleanup()
 
@@ -95,11 +96,11 @@ func TestDependencies(t *testing.T) {
 // Test OnMessageReady callback
 func TestCallback_OnMessageReady(t *testing.T) {
 	// Create sender and receiver RMs
-	senderRm, err := NewReliabilityManager()
+	senderRm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer senderRm.Cleanup()
 
-	receiverRm, err := NewReliabilityManager()
+	receiverRm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer receiverRm.Cleanup()
 
@@ -151,11 +152,11 @@ func TestCallback_OnMessageReady(t *testing.T) {
 // Test OnMessageSent callback (via causal history ACK)
 func TestCallback_OnMessageSent(t *testing.T) {
 	// Create two RMs
-	rm1, err := NewReliabilityManager()
+	rm1, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm1.Cleanup()
 
-	rm2, err := NewReliabilityManager()
+	rm2, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm2.Cleanup()
 
@@ -222,11 +223,11 @@ func TestCallback_OnMessageSent(t *testing.T) {
 // Test OnMissingDependencies callback
 func TestCallback_OnMissingDependencies(t *testing.T) {
 	// Use separate sender/receiver RMs explicitly
-	senderRm, err := NewReliabilityManager()
+	senderRm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer senderRm.Cleanup()
 
-	receiverRm, err := NewReliabilityManager()
+	receiverRm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer receiverRm.Cleanup()
 
@@ -298,7 +299,7 @@ func TestCallback_OnMissingDependencies(t *testing.T) {
 
 // Test OnPeriodicSync callback
 func TestCallback_OnPeriodicSync(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -344,11 +345,11 @@ func TestCallback_OnPeriodicSync(t *testing.T) {
 // Combined Test for multiple callbacks
 func TestCallbacks_Combined(t *testing.T) {
 	// Create sender and receiver RMs
-	senderRm, err := NewReliabilityManager()
+	senderRm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer senderRm.Cleanup()
 
-	receiverRm, err := NewReliabilityManager()
+	receiverRm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer receiverRm.Cleanup()
 
@@ -442,7 +443,7 @@ func TestCallbacks_Combined(t *testing.T) {
 	require.NoError(t, err)
 
 	// 6. Create Receiver2, register missing deps callback
-	receiverRm2, err := NewReliabilityManager()
+	receiverRm2, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer receiverRm2.Cleanup()
 
@@ -545,7 +546,7 @@ func waitTimeout(wg *sync.WaitGroup, timeout time.Duration, t *testing.T) {
 
 // Test multi-channel functionality - one RM can handle messages from different channels
 func TestMultiChannel_SingleRM(t *testing.T) {
-	rm, err := NewReliabilityManager()
+	rm, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm.Cleanup()
 
@@ -592,12 +593,12 @@ func TestMultiChannel_SingleRM(t *testing.T) {
 // Test that callbacks are correctly triggered for multiple channels
 func TestMultiChannelCallbacks(t *testing.T) {
 	// rm1 is the manager we are testing callbacks on
-	rm1, err := NewReliabilityManager()
+	rm1, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm1.Cleanup()
 
 	// rm2 simulates another peer
-	rm2, err := NewReliabilityManager()
+	rm2, err := NewReliabilityManager(zap.NewNop())
 	require.NoError(t, err)
 	defer rm2.Cleanup()
 
