@@ -5,6 +5,7 @@ package sds
 /*
 	#include <libsds.h>
 	#include <stdlib.h>
+	#include <stdint.h>
 	#include <string.h>
 
 	// Event callback shared by all ReliabilityManager instances; userData carries
@@ -17,12 +18,12 @@ package sds
 
 	typedef struct {
 		int ret;
-		char* msg;   // owned copy of the CBOR payload (freed by freeResp)
+		char* msg;       // owned copy of the CBOR payload (freed by freeResp)
 		size_t len;
-		void* ffiWg; // *sync.WaitGroup the caller blocks on
+		uintptr_t ffiWg; // cgo.Handle for the *sync.WaitGroup the caller blocks on
 	} SdsResp;
 
-	static void* allocResp(void* wg) {
+	static void* allocResp(uintptr_t wg) {
 		SdsResp* r = calloc(1, sizeof(SdsResp));
 		r->ffiWg = wg;
 		return r;
@@ -113,6 +114,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"runtime/cgo"
 	"sync"
 	"unsafe"
 
@@ -151,7 +153,11 @@ func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
 		// Copy the CBOR payload into resp-owned memory; the libsds buffer is only
 		// valid during this callback.
 		C.setRespMsg(resp, msg, len)
-		wg := (*sync.WaitGroup)(m.ffiWg)
+		// ffiWg is a cgo.Handle, not a raw Go pointer: the callback fires on the
+		// nim-ffi thread while the caller is parked in wg.Wait(), and a raw
+		// pointer to the caller's (stack) WaitGroup can dangle when GC relocates
+		// that stack. The handle resolves to a stable *sync.WaitGroup.
+		wg := cgo.Handle(m.ffiWg).Value().(*sync.WaitGroup)
 		wg.Done()
 	}
 }
@@ -159,8 +165,14 @@ func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
 // call runs a libsds request that delivers its CBOR result through SdsGoCallback,
 // blocks until the callback fires, and returns the (copied) result bytes.
 func sdsCall(invoke func(resp unsafe.Pointer)) (int, []byte) {
-	wg := sync.WaitGroup{}
-	resp := C.allocResp(unsafe.Pointer(&wg))
+	wg := &sync.WaitGroup{}
+	// Pass the WaitGroup as a cgo.Handle (a stable uintptr token) rather than a
+	// raw &wg: storing a Go pointer in C memory and dereferencing it from the
+	// callback thread violates the cgo pointer rules and crashes under GC.
+	h := cgo.NewHandle(wg)
+	defer h.Delete()
+
+	resp := C.allocResp(C.uintptr_t(h))
 	defer C.freeResp(resp)
 
 	wg.Add(1)
