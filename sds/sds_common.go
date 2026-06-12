@@ -1,6 +1,7 @@
 package sds
 
 import (
+	"sync"
 	"time"
 	"unsafe"
 
@@ -29,22 +30,40 @@ type ReliabilityManager struct {
 // rm is the event being emited for. Since we only have a global
 // callback in the go side, We register all the rm's that we create
 // so we can later obtain which instance of `ReliabilityManager` it should
-// be invoked depending on the ctx received
-var rmRegistry map[unsafe.Pointer]*ReliabilityManager
+// be invoked depending on the ctx received.
+//
+// rmRegistryMu guards the map: it is written by register/unregister (on
+// Create/Cleanup) and read by sdsGlobalEventCallback on the nim-ffi event
+// thread, so concurrent managers would otherwise trigger a fatal
+// "concurrent map read and map write".
+var (
+	rmRegistryMu sync.RWMutex
+	rmRegistry   map[unsafe.Pointer]*ReliabilityManager
+)
 
 func init() {
 	rmRegistry = make(map[unsafe.Pointer]*ReliabilityManager)
 }
 
 func registerReliabilityManager(rm *ReliabilityManager) {
-	_, ok := rmRegistry[rm.rmCtx]
-	if !ok {
+	rmRegistryMu.Lock()
+	defer rmRegistryMu.Unlock()
+	if _, ok := rmRegistry[rm.rmCtx]; !ok {
 		rmRegistry[rm.rmCtx] = rm
 	}
 }
 
 func unregisterReliabilityManager(rm *ReliabilityManager) {
+	rmRegistryMu.Lock()
+	defer rmRegistryMu.Unlock()
 	delete(rmRegistry, rm.rmCtx)
+}
+
+func lookupReliabilityManager(ctx unsafe.Pointer) (*ReliabilityManager, bool) {
+	rmRegistryMu.RLock()
+	defer rmRegistryMu.RUnlock()
+	rm, ok := rmRegistry[ctx]
+	return rm, ok
 }
 
 // sdsEventEnvelope is the CBOR wrapper libsds emits for every event:

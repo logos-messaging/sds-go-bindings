@@ -81,8 +81,8 @@ package sds
 		return sds_create((const uint8_t*) reqCbor, reqCborLen, (SdsCallBack) SdsGoCallback, resp);
 	}
 
-	static int cGoSdsDestroy(void* ctx) {
-		return sds_destroy(ctx);
+	static int cGoSdsDestroy(void* ctx, void* resp) {
+		return sds_destroy(ctx, (SdsCallBack) SdsGoCallback, resp);
 	}
 
 	static unsigned long long cGoSdsAddEventListener(void* ctx, const char* eventName) {
@@ -269,7 +269,7 @@ func sdsGlobalEventCallback(callerRet C.int, msg *C.char, len C.size_t, userData
 		eventCbor = C.GoBytes(unsafe.Pointer(msg), C.int(len))
 	}
 
-	rm, ok := rmRegistry[userData] // userData carries the rm's ctx handle
+	rm, ok := lookupReliabilityManager(userData) // userData carries the rm's ctx handle
 	if !ok {
 		return
 	}
@@ -288,9 +288,16 @@ func (rm *ReliabilityManager) Cleanup() error {
 
 	rm.logger.Debug("cleaning up reliability manager")
 
-	ret := int(C.cGoSdsDestroy(rm.rmCtx))
+	// sds_destroy recycles the context (it does not stop the worker threads).
+	// It returns immediately; the real outcome is delivered through the callback
+	// once the FFI thread has drained and parked the context, so we block on it
+	// via sdsCall. Blocking here also backpressures Create against recycle so the
+	// fixed context pool can't be exhausted under churn.
+	ret, data := sdsCall(func(resp unsafe.Pointer) {
+		C.cGoSdsDestroy(rm.rmCtx, resp)
+	})
 	if ret != C.RET_OK {
-		return errorspkg.Errorf("error CleanupReliabilityManager: ret code %d", ret)
+		return respError("error CleanupReliabilityManager", ret, data)
 	}
 
 	unregisterReliabilityManager(rm)
