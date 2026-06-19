@@ -1,21 +1,33 @@
 package sds
 
 import (
-	"encoding/json"
+	"sync"
 	"time"
 	"unsafe"
 
+	"github.com/fxamacker/cbor/v2"
 	"go.uber.org/zap"
 )
 
 const requestTimeout = 30 * time.Second
 const EventChanBufferSize = 1024
 
+// sdsEventNames are the events the library emits; the bindings register one
+// listener per name via sds_add_event_listener.
+var sdsEventNames = []string{
+	"message_ready",
+	"message_sent",
+	"missing_dependencies",
+	"periodic_sync",
+	"repair_ready",
+}
+
 type EventCallbacks struct {
 	OnMessageReady        func(messageId MessageID, channelId string)
 	OnMessageSent         func(messageId MessageID, channelId string)
 	OnMissingDependencies func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
 	OnPeriodicSync        func()
+	OnRepairReady         func(message []byte, channelId string)
 	RetrievalHintProvider func(messageId MessageID) []byte
 }
 
@@ -33,11 +45,27 @@ type ReliabilityManager struct {
 // be invoked depending on the ctx received
 var rmRegistry map[unsafe.Pointer]*ReliabilityManager
 
+// rmRegistryMu guards rmRegistry. libsds invokes the global callbacks on its
+// own worker/event threads, so reads from those callbacks race the register/
+// unregister writes done on the goroutines that create and clean up managers.
+var rmRegistryMu sync.RWMutex
+
 func init() {
 	rmRegistry = make(map[unsafe.Pointer]*ReliabilityManager)
 }
 
+// lookupReliabilityManager resolves the manager for a ctx under the read lock.
+// Used by the global callbacks, which run on libsds threads.
+func lookupReliabilityManager(ctx unsafe.Pointer) (*ReliabilityManager, bool) {
+	rmRegistryMu.RLock()
+	defer rmRegistryMu.RUnlock()
+	rm, ok := rmRegistry[ctx]
+	return rm, ok
+}
+
 func registerReliabilityManager(rm *ReliabilityManager) {
+	rmRegistryMu.Lock()
+	defer rmRegistryMu.Unlock()
 	_, ok := rmRegistry[rm.rmCtx]
 	if !ok {
 		rmRegistry[rm.rmCtx] = rm
@@ -45,47 +73,66 @@ func registerReliabilityManager(rm *ReliabilityManager) {
 }
 
 func unregisterReliabilityManager(rm *ReliabilityManager) {
+	rmRegistryMu.Lock()
+	defer rmRegistryMu.Unlock()
 	delete(rmRegistry, rm.rmCtx)
 }
 
-type jsonEvent struct {
-	EventType string `json:"eventType"`
+// eventEnvelope mirrors nim-ffi's CBOR wire shape:
+// { "eventType": <name>, "payload": <event object> }. The payload is decoded
+// lazily once the event type is known.
+type eventEnvelope struct {
+	EventType string          `cbor:"eventType"`
+	Payload   cbor.RawMessage `cbor:"payload"`
+}
+
+// sdsMissingDep is the CBOR shape of one missing dependency, shared by the
+// unwrap response and the missing_dependencies event.
+type sdsMissingDep struct {
+	MessageId     string `cbor:"messageId"`
+	RetrievalHint []byte `cbor:"retrievalHint"`
 }
 
 type msgEvent struct {
-	MessageId MessageID `json:"messageId"`
-	ChannelId string    `json:"channelId"`
+	MessageId MessageID `cbor:"messageId"`
+	ChannelId string    `cbor:"channelId"`
 }
 
 type missingDepsEvent struct {
-	MessageId   MessageID   `json:"messageId"`
-	MissingDeps []HistoryEntry `json:"missingDeps"`
-	ChannelId   string         `json:"channelId"`
+	MessageId   MessageID       `cbor:"messageId"`
+	MissingDeps []sdsMissingDep `cbor:"missingDeps"`
+	ChannelId   string          `cbor:"channelId"`
+}
+
+type repairReadyEvent struct {
+	Message   []byte `cbor:"message"`
+	ChannelId string `cbor:"channelId"`
 }
 
 func (rm *ReliabilityManager) RegisterCallbacks(callbacks EventCallbacks) {
 	rm.callbacks = callbacks
 }
 
-func (rm *ReliabilityManager) OnEvent(eventStr string) {
-	jsonEvent := jsonEvent{}
-	err := json.Unmarshal([]byte(eventStr), &jsonEvent)
-	if err != nil {
-		rm.logger.Error("failed to unmarshal sds event string", zap.Error(err))
+func (rm *ReliabilityManager) OnEvent(data []byte) {
+	envelope := eventEnvelope{}
+	if err := cbor.Unmarshal(data, &envelope); err != nil {
+		rm.logger.Error("failed to unmarshal sds event", zap.Error(err))
 		return
 	}
 
-	switch jsonEvent.EventType {
+	switch envelope.EventType {
 	case "message_ready":
-		rm.parseMessageReadyEvent(eventStr)
+		rm.parseMessageReadyEvent(envelope.Payload)
 	case "message_sent":
-		rm.parseMessageSentEvent(eventStr)
+		rm.parseMessageSentEvent(envelope.Payload)
 	case "missing_dependencies":
-		rm.parseMissingDepsEvent(eventStr)
+		rm.parseMissingDepsEvent(envelope.Payload)
 	case "periodic_sync":
 		if rm.callbacks.OnPeriodicSync != nil {
 			rm.callbacks.OnPeriodicSync()
 		}
+	case "repair_ready":
+		rm.parseRepairReadyEvent(envelope.Payload)
 	}
 }
 
@@ -95,11 +142,11 @@ func (rm *ReliabilityManager) OnCallbackError(callerRet int, err string) {
 		zap.String("errMsg", err))
 }
 
-func (rm *ReliabilityManager) parseMessageReadyEvent(eventStr string) {
+func (rm *ReliabilityManager) parseMessageReadyEvent(payload []byte) {
 	msgEvent := msgEvent{}
-	err := json.Unmarshal([]byte(eventStr), &msgEvent)
-	if err != nil {
+	if err := cbor.Unmarshal(payload, &msgEvent); err != nil {
 		rm.logger.Error("failed to parse message ready event", zap.Error(err))
+		return
 	}
 
 	if rm.callbacks.OnMessageReady != nil {
@@ -107,10 +154,9 @@ func (rm *ReliabilityManager) parseMessageReadyEvent(eventStr string) {
 	}
 }
 
-func (rm *ReliabilityManager) parseMessageSentEvent(eventStr string) {
+func (rm *ReliabilityManager) parseMessageSentEvent(payload []byte) {
 	msgEvent := msgEvent{}
-	err := json.Unmarshal([]byte(eventStr), &msgEvent)
-	if err != nil {
+	if err := cbor.Unmarshal(payload, &msgEvent); err != nil {
 		rm.logger.Error("failed to parse message sent event", zap.Error(err))
 		return
 	}
@@ -120,15 +166,30 @@ func (rm *ReliabilityManager) parseMessageSentEvent(eventStr string) {
 	}
 }
 
-func (rm *ReliabilityManager) parseMissingDepsEvent(eventStr string) {
+func (rm *ReliabilityManager) parseMissingDepsEvent(payload []byte) {
 	missingDepsEvent := missingDepsEvent{}
-	err := json.Unmarshal([]byte(eventStr), &missingDepsEvent)
-	if err != nil {
+	if err := cbor.Unmarshal(payload, &missingDepsEvent); err != nil {
 		rm.logger.Error("failed to parse missing dependencies event", zap.Error(err))
 		return
 	}
 
 	if rm.callbacks.OnMissingDependencies != nil {
-		rm.callbacks.OnMissingDependencies(missingDepsEvent.MessageId, missingDepsEvent.MissingDeps, missingDepsEvent.ChannelId)
+		deps := make([]HistoryEntry, len(missingDepsEvent.MissingDeps))
+		for i, d := range missingDepsEvent.MissingDeps {
+			deps[i] = HistoryEntry{MessageID: MessageID(d.MessageId), RetrievalHint: d.RetrievalHint}
+		}
+		rm.callbacks.OnMissingDependencies(missingDepsEvent.MessageId, deps, missingDepsEvent.ChannelId)
+	}
+}
+
+func (rm *ReliabilityManager) parseRepairReadyEvent(payload []byte) {
+	repairReadyEvent := repairReadyEvent{}
+	if err := cbor.Unmarshal(payload, &repairReadyEvent); err != nil {
+		rm.logger.Error("failed to parse repair ready event", zap.Error(err))
+		return
+	}
+
+	if rm.callbacks.OnRepairReady != nil {
+		rm.callbacks.OnRepairReady(repairReadyEvent.Message, repairReadyEvent.ChannelId)
 	}
 }
