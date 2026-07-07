@@ -362,7 +362,7 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 		}
 		rm.logger.Debug("successfully unwrapped message")
 
-		rm.logger.Debug("Unwrapped message JSON: %s", resStr)
+		rm.logger.Debug("unwrapped message json", zap.String("json", resStr))
 		var unwrappedMessage UnwrappedMessage
 		err := json.Unmarshal([]byte(resStr), &unwrappedMessage)
 		if err != nil {
