@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       nim-sds-ref:
-        description: 'nim-sds ref to build libsds from'
-        default: master
+        description: 'nim-sds ref to build libsds from (default: the pin in sds_go_bindings.nimble)'
+        default: ''
 
 env:
-  NIM_SDS_REF: ${{ github.event.inputs.nim-sds-ref || 'master' }}
+  NIM_SDS_REF: ${{ github.event.inputs.nim-sds-ref || '' }}
   GO_VERSION: '1.24'
   NIM_VERSION: '2.2.4'
 
@@ -25,23 +25,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: logos-messaging/nim-sds
-          ref: ${{ env.NIM_SDS_REF }}
-          submodules: recursive
-          path: .nim-sds
-
       - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: ${{ env.NIM_VERSION }}
 
-      - name: Build libsds
-        working-directory: .nim-sds
+      - name: Override the nim-sds pin
+        if: ${{ env.NIM_SDS_REF != '' }}
         run: |
-          nimble setup -l
-          nimble libsdsDynamicLinux
-          echo "CGO_CFLAGS=-I$PWD/library" >> "$GITHUB_ENV"
+          sed -i "s|\(nim-sds\)#[^\"]*|\1#${NIM_SDS_REF}|" sds_go_bindings.nimble
+          grep nim-sds sds_go_bindings.nimble
+
+      - name: Build libsds
+        # Through the Nimble package, the same path a consumer takes.
+        run: |
+          make deps
+          make libsds
+          echo "CGO_CFLAGS=-I$PWD/build" >> "$GITHUB_ENV"
           echo "CGO_LDFLAGS=-L$PWD/build -lsds -Wl,-rpath,$PWD/build" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@v5
