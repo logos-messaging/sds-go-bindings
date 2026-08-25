@@ -1,0 +1,7 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*github.com/waku-org/sds-go-bindings/sds.ReliabilityManager).Cleanup

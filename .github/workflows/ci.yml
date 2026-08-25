@@ -1,0 +1,66 @@
+name: ci
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [master, release/*]
+  workflow_dispatch:
+    inputs:
+      nim-sds-ref:
+        description: 'nim-sds ref to build libsds from'
+        default: master
+
+env:
+  NIM_SDS_REF: ${{ github.event.inputs.nim-sds-ref || 'master' }}
+  GO_VERSION: '1.24'
+  NIM_VERSION: '2.2.4'
+
+jobs:
+  build-test-lint:
+    name: 'go / ubuntu-latest'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: logos-messaging/nim-sds
+          ref: ${{ env.NIM_SDS_REF }}
+          submodules: recursive
+          path: .nim-sds
+
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
+
+      - name: Build libsds
+        working-directory: .nim-sds
+        run: |
+          nimble setup -l
+          nimble libsdsDynamicLinux
+          echo "CGO_CFLAGS=-I$PWD/library" >> "$GITHUB_ENV"
+          echo "CGO_LDFLAGS=-L$PWD/build -lsds -Wl,-rpath,$PWD/build" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build
+        run: go build ./...
+
+      - name: Build lint stubs
+        run: go build -tags lint ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - uses: golangci/golangci-lint-action@v8
+        if: ${{ !cancelled() }}
+        with:
+          version: v2.4.0
