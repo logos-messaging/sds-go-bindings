@@ -3,13 +3,11 @@ package sds
 import (
 	"encoding/json"
 	"sync"
-	"time"
 	"unsafe"
 
 	"go.uber.org/zap"
 )
 
-const requestTimeout = 30 * time.Second
 const EventChanBufferSize = 1024
 
 type EventCallbacks struct {
