@@ -16,7 +16,9 @@ on:
 env:
   NIM_SDS_REF: ${{ github.event.inputs.nim-sds-ref || '' }}
   GO_VERSION: '1.24'
-  NIM_VERSION: '2.2.4'
+  # 2.2.4 ships nimble 0.18.2, whose resolver cannot reconcile the taskpools
+  # constraint nim-sds carries for nim-ffi.
+  NIM_VERSION: '2.2.10'
 
 jobs:
   build-test-lint:
