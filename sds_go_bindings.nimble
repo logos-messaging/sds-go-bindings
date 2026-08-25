@@ -46,12 +46,12 @@ proc nimblePkgDir(name: string): string =
 
 ### Tasks
 
-task libsds, "Build the libsds these bindings link against":
+proc runNimSdsTask(taskName: string) =
   ## Delegates to nim-sds' own build task. Consumers set NIM_PARAMS (their
   ## resolved --path set) and LIBSDS_OUT; neither is decided here.
   let pkgDir = nimblePkgDir("sds")
   withDir pkgDir:
-    exec "nimble libsds"
+    exec "nimble " & taskName
 
   let outDir = getEnv("LIBSDS_OUT")
   if outDir.len > 0:
@@ -59,3 +59,12 @@ task libsds, "Build the libsds these bindings link against":
     mkDir outDir
     cpFile pkgDir / "build" / lib, outDir / lib
     cpFile pkgDir / "library" / "libsds.h", outDir / "libsds.h"
+
+task libsds, "Build the libsds these bindings link against":
+  runNimSdsTask("libsds")
+
+task libsdsAndroid, "Build libsds for Android; ARCH selects the architecture":
+  runNimSdsTask("libsdsAndroid")
+
+task libsdsIOS, "Build libsds for iOS":
+  runNimSdsTask("libsdsIOS")
