@@ -16,7 +16,8 @@ on:
 env:
   NIM_SDS_REF: ${{ github.event.inputs.nim-sds-ref || '' }}
   GO_VERSION: '1.24'
-  NIM_VERSION: '2.2.4'
+  # nimble.lock pins the compiler too, so this has to match what generated it.
+  NIM_VERSION: '2.2.10'
 
 jobs:
   build-test-lint:
