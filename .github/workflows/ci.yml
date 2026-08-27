@@ -17,6 +17,9 @@ env:
   NIM_SDS_REF: ${{ github.event.inputs.nim-sds-ref || '' }}
   GO_VERSION: '1.24'
   NIM_VERSION: '2.2.4'
+  # The nimble bundled with 2.2.4 is 0.18.2, which hashes packages differently
+  # and so cannot verify a lock file written by 0.22.x.
+  NIMBLE_VERSION: '0.22.2'
 
 jobs:
   build-test-lint:
@@ -28,6 +31,13 @@ jobs:
       - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: ${{ env.NIM_VERSION }}
+
+      - name: Install nimble ${{ env.NIMBLE_VERSION }}
+        run: |
+          curl -fsSL -o /tmp/nimble.tar.gz \
+            "https://github.com/nim-lang/nimble/releases/download/v${NIMBLE_VERSION}/nimble-linux_x64.tar.gz"
+          tar -xzf /tmp/nimble.tar.gz -C "$HOME/.nimble/bin"
+          nimble --version | head -2
 
       - name: Override the nim-sds pin
         if: ${{ env.NIM_SDS_REF != '' }}
