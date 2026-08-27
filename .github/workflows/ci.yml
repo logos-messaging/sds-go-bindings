@@ -36,7 +36,9 @@ jobs:
         run: |
           curl -fsSL -o /tmp/nimble.tar.gz \
             "https://github.com/nim-lang/nimble/releases/download/v${NIMBLE_VERSION}/nimble-linux_x64.tar.gz"
+          mkdir -p "$HOME/.nimble/bin"
           tar -xzf /tmp/nimble.tar.gz -C "$HOME/.nimble/bin"
+          chmod +x "$HOME/.nimble/bin/nimble"
           nimble --version | head -2
 
       - name: Override the nim-sds pin
