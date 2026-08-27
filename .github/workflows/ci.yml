@@ -8,13 +8,8 @@ on:
   push:
     branches: [master, release/*]
   workflow_dispatch:
-    inputs:
-      nim-sds-ref:
-        description: 'nim-sds ref to build libsds from (default: the pin in sds_go_bindings.nimble)'
-        default: ''
 
 env:
-  NIM_SDS_REF: ${{ github.event.inputs.nim-sds-ref || '' }}
   GO_VERSION: '1.24'
   NIM_VERSION: '2.2.4'
   # The nimble bundled with 2.2.4 is 0.18.2, which hashes packages differently
@@ -40,12 +35,6 @@ jobs:
           tar -xzf /tmp/nimble.tar.gz -C "$HOME/.nimble/bin"
           chmod +x "$HOME/.nimble/bin/nimble"
           nimble --version | head -2
-
-      - name: Override the nim-sds pin
-        if: ${{ env.NIM_SDS_REF != '' }}
-        run: |
-          sed -i "s|\(nim-sds\)#[^\"]*|\1#${NIM_SDS_REF}|" sds_go_bindings.nimble
-          grep nim-sds sds_go_bindings.nimble
 
       - name: Build libsds
         # Through the Nimble package, the same path a consumer takes.
