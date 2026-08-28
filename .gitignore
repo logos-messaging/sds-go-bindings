@@ -25,3 +25,11 @@ third_party
 nimcache
 
 .idea
+
+# Nimble
+nimble.develop
+nimble.paths
+nimbledeps
+
+# Library built from the Nimble dependency
+build
