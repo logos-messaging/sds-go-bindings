@@ -12,9 +12,6 @@ on:
 env:
   GO_VERSION: '1.24'
   NIM_VERSION: '2.2.6'
-  # The nimble bundled with Nim hashes packages differently and so cannot
-  # verify a lock file written by 0.22.x.
-  NIMBLE_VERSION: '0.22.2'
 
 jobs:
   build-test-lint:
@@ -27,14 +24,12 @@ jobs:
         with:
           nim-version: ${{ env.NIM_VERSION }}
 
-      - name: Install nimble ${{ env.NIMBLE_VERSION }}
-        run: |
-          curl -fsSL -o /tmp/nimble.tar.gz \
-            "https://github.com/nim-lang/nimble/releases/download/v${NIMBLE_VERSION}/nimble-linux_x64.tar.gz"
-          mkdir -p "$HOME/.nimble/bin"
-          tar -xzf /tmp/nimble.tar.gz -C "$HOME/.nimble/bin"
-          chmod +x "$HOME/.nimble/bin/nimble"
-          nimble --version | head -2
+      # The Nimble bundled with Nim hashes packages differently and cannot
+      # verify this lock file. nightly is also what nim-sds resolves with.
+      - uses: nim-lang/setup-nimble-action@v1
+        with:
+          nimble-version: 'nightly'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build libsds
         # Through the Nimble package, the same path a consumer takes.
