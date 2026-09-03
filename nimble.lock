@@ -14,7 +14,7 @@
     "unittest2": {
       "version": "0.2.5",
       "vcsRevision": "26f2ef3ae0ec72a2a75bfe557e02e88f6a31c189",
-      "url": "https://github.com/status-im/nim-unittest2",
+      "url": "https://github.com/status-im/nim-unittest2.git",
       "downloadMethod": "git",
       "dependencies": [
         "nim"
@@ -269,8 +269,8 @@
       }
     },
     "sds": {
-      "version": "#b98f2c1",
-      "vcsRevision": "b98f2c16646269971834ea143d41fa196126797c",
+      "version": "#04441cb",
+      "vcsRevision": "04441cba115e59c5f3ad959ea83ddffee68037cb",
       "url": "https://github.com/logos-messaging/nim-sds",
       "downloadMethod": "git",
       "dependencies": [
@@ -286,7 +286,7 @@
         "ffi"
       ],
       "checksums": {
-        "sha1": "9cf1eacdb13d13c3416dd064b550a55e3b01cb4a"
+        "sha1": "33f125cfb8ca1308a38349978a27f14162ced366"
       }
     }
   },
