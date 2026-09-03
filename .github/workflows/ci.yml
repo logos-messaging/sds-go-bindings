@@ -11,33 +11,72 @@ on:
 
 env:
   GO_VERSION: '1.24'
+  # nim-sds pins the compiler exactly; this has to agree with it.
   NIM_VERSION: '2.2.6'
+  NIMBLE_CHANNEL: 'nightly'
 
 jobs:
   build-test-lint:
-    name: 'go / ubuntu-latest'
-    runs-on: ubuntu-latest
+    name: 'go / ${{ matrix.os }}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
       - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: ${{ env.NIM_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The Nimble bundled with Nim hashes packages differently and cannot
       # verify this lock file. nightly is also what nim-sds resolves with.
       - uses: nim-lang/setup-nimble-action@v1
         with:
-          nimble-version: 'nightly'
+          nimble-version: ${{ env.NIMBLE_CHANNEL }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # nim-lsquic vendors boringssl, whose test paths overrun the 260-char
+      # limit from nimble's default temp directory.
+      - name: Shorten TEMP path for nimble
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\T | Out-Null
+          "TEMP=C:\T" >> $env:GITHUB_ENV
+          "TMP=C:\T"  >> $env:GITHUB_ENV
+
+      # Resolving and compiling the Nim dependencies dominates this job.
+      # nimble.paths holds absolute paths, so the key is per-runner-OS.
+      - name: Cache Nim dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            nimbledeps
+            nimble.paths
+          key: nimbledeps-${{ matrix.os }}-nim${{ env.NIM_VERSION }}-${{ env.NIMBLE_CHANNEL }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
+
+      - name: Resolve Nim dependencies
+        shell: bash
+        run: make deps
 
       - name: Build libsds
         # Through the Nimble package, the same path a consumer takes.
-        run: |
-          make deps
-          make libsds
-          echo "CGO_CFLAGS=-I$PWD/build" >> "$GITHUB_ENV"
-          echo "CGO_LDFLAGS=-L$PWD/build -lsds -Wl,-rpath,$PWD/build" >> "$GITHUB_ENV"
+        shell: bash
+        run: make libsds
+
+      - name: Export cgo flags
+        # The Makefile owns them: they differ per platform.
+        shell: bash
+        run: make print-cgo >> "$GITHUB_ENV"
+
+      # Windows has no rpath; the loader finds the DLL through PATH.
+      - name: Put libsds on PATH
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "$PWD/build" >> "$GITHUB_PATH"
 
       - uses: actions/setup-go@v5
         with:
@@ -56,6 +95,7 @@ jobs:
         run: go test -race ./...
 
       - uses: golangci/golangci-lint-action@v8
-        if: ${{ !cancelled() }}
+        # One platform is enough; the linters are not platform-specific.
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         with:
           version: v2.4.0
