@@ -12,10 +12,6 @@ on:
 env:
   GO_VERSION: '1.24'
   NIM_VERSION: '2.2.6'
-  # Nimble master. The Nimble bundled with Nim hashes packages differently and
-  # cannot verify this lock file, and no release yet carries the lock-file
-  # fixes nim-lang/nimble#1833 and #1838 that a URL require needs.
-  NIMBLE_COMMIT: '07caee397d628c9e93d81048268365c4c2414a80'
 
 jobs:
   build-test-lint:
@@ -28,16 +24,12 @@ jobs:
         with:
           nim-version: ${{ env.NIM_VERSION }}
 
-      # Built rather than downloaded: the prebuilt binaries live under a rolling
-      # 'latest' tag, which no action input can pin to a commit.
-      - name: Install Nimble
-        run: |
-          git clone --filter=blob:none https://github.com/nim-lang/nimble /tmp/nimble
-          git -C /tmp/nimble checkout --detach "$NIMBLE_COMMIT"
-          git -C /tmp/nimble submodule update --init --recursive
-          mkdir -p "$HOME/.nimble/bin"
-          nim c -d:release --outdir:"$HOME/.nimble/bin" /tmp/nimble/src/nimble.nim
-          nimble --version | tail -2
+      # The Nimble bundled with Nim hashes packages differently and cannot
+      # verify this lock file. nightly is also what nim-sds resolves with.
+      - uses: nim-lang/setup-nimble-action@v1
+        with:
+          nimble-version: 'nightly'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build libsds
         # Through the Nimble package, the same path a consumer takes.
