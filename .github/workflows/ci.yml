@@ -11,9 +11,9 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  NIM_VERSION: '2.2.4'
-  # The nimble bundled with 2.2.4 is 0.18.2, which hashes packages differently
-  # and so cannot verify a lock file written by 0.22.x.
+  NIM_VERSION: '2.2.6'
+  # The nimble bundled with Nim hashes packages differently and so cannot
+  # verify a lock file written by 0.22.x.
   NIMBLE_VERSION: '0.22.2'
 
 jobs:
