@@ -64,7 +64,11 @@ proc runNimSdsTask(taskName: string) =
 
   let outDir = getEnv("LIBSDS_OUT")
   if outDir.len > 0:
-    let lib = DynlibFormat % "sds"
+    # nim-sds names every platform's output libsds.*; DynlibFormat would drop
+    # the lib prefix on Windows.
+    let lib = "libsds." & (when defined(windows): "dll"
+                           elif defined(macosx): "dylib"
+                           else: "so")
     mkDir outDir
     cpFile pkgDir / "build" / lib, outDir / lib
     cpFile pkgDir / "library" / "libsds.h", outDir / "libsds.h"
