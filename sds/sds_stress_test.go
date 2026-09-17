@@ -24,7 +24,19 @@ import (
 //     the FFI thread dereferences &wg via C memory; aggressive GC stresses it.
 //
 // Run with: go test -race -run TestStress
+// The FFI request channel holds one entry, and nim-ffi frees a request that
+// trySend already handed to the channel when fireSync then times out. A slow
+// runner under -race trips that: the slot stays occupied by a freed pointer
+// and every later send reports "Couldn't send a request to the ffi thread".
+func skipIfStressUnsupported(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("wedges the nim-ffi request channel; see logos-messaging/nim-ffi")
+	}
+}
+
 func TestStress_ConcurrentManagersWithEvents(t *testing.T) {
+	skipIfStressUnsupported(t)
 	if os.Getenv("STRESS_FFI_RECYCLE") == "" {
 		t.Skip("crashes libsds: the watchdog of a recycled FFI context calls its cleared eventCallback (nim-ffi 0.1.5). Set STRESS_FFI_RECYCLE=1 to run.")
 	}
@@ -127,6 +139,7 @@ func TestStress_ConcurrentManagersWithEvents(t *testing.T) {
 // create/destroy churn — this isolates the dispatch + foreign-thread-GC + cgo
 // callback paths from the context-pool create/destroy concurrency.
 func TestStress_LongLivedManagersHammerUnwrap(t *testing.T) {
+	skipIfStressUnsupported(t)
 	defer debug.SetGCPercent(debug.SetGCPercent(1))
 
 	const channelID = "stress-longlived"
