@@ -76,8 +76,8 @@ jobs:
       # Windows has no rpath; the loader finds the DLL through PATH.
       - name: Put libsds on PATH
         if: runner.os == 'Windows'
-        shell: bash
-        run: echo "$PWD/build" >> "$GITHUB_PATH"
+        shell: pwsh
+        run: echo "$env:GITHUB_WORKSPACE\build" >> $env:GITHUB_PATH
 
       - uses: actions/setup-go@v5
         with:
