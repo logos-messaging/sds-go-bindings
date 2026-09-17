@@ -11,8 +11,6 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  # nim-sds pins the compiler exactly; this has to agree with it.
-  NIM_VERSION: '2.2.6'
   NIMBLE_CHANNEL: 'nightly'
 
 jobs:
@@ -26,13 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: jiro4989/setup-nim-action@v2
-        with:
-          nim-version: ${{ env.NIM_VERSION }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # The Nimble bundled with Nim hashes packages differently and cannot
-      # verify this lock file. nightly is also what nim-sds resolves with.
+      # No compiler is installed here: Nimble resolves `requires "nim"` and the
+      # lock, and builds with what that names. Installing one alongside also
+      # puts its bundled Nimble on PATH, which a nested `exec` then picks up
+      # in preference to this one (nim-lang/nimble#1840).
       - uses: nim-lang/setup-nimble-action@v1
         with:
           nimble-version: ${{ env.NIMBLE_CHANNEL }}
@@ -56,11 +51,17 @@ jobs:
           path: |
             nimbledeps
             nimble.paths
-          key: nimbledeps-${{ matrix.os }}-nim${{ env.NIM_VERSION }}-${{ env.NIMBLE_CHANNEL }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
+          key: nimbledeps-${{ matrix.os }}-${{ env.NIMBLE_CHANNEL }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
 
       - name: Resolve Nim dependencies
         shell: bash
         run: make deps
+
+      - name: Report the toolchain Nimble settled on
+        shell: bash
+        run: |
+          nimble --version | head -1
+          command -v nim && nim --version | head -1 || echo "no nim on PATH"
 
       - name: Build libsds
         # Through the Nimble package, the same path a consumer takes.
