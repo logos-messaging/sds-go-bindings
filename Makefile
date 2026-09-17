@@ -26,7 +26,10 @@ export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
 
 .PHONY: deps libsds build test lint print-cgo clean
 
-deps: nimble.paths ##@build Resolve the Nim dependencies
+# Always re-resolves. A restored nimbledeps is an accelerator and decides
+# nothing: skipping setup against one leaves Nimble to re-resolve mid-build.
+deps: ##@build Resolve the Nim dependencies
+	$(NIMBLE) setup --localdeps -y
 
 nimble.paths:
 	$(NIMBLE) setup --localdeps -y
