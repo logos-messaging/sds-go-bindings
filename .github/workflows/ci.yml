@@ -51,7 +51,7 @@ jobs:
           path: |
             nimbledeps
             nimble.paths
-          key: nimbledeps-${{ matrix.os }}-${{ env.NIMBLE_CHANNEL }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
+          key: nimbledeps-v2-${{ matrix.os }}-${{ env.NIMBLE_CHANNEL }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
 
       - name: Resolve Nim dependencies
         shell: bash
