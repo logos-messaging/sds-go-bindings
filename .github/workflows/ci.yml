@@ -28,7 +28,7 @@ jobs:
       # lock, and builds with what that names. Installing one alongside also
       # puts its bundled Nimble on PATH, which a nested `exec` then picks up
       # in preference to this one (nim-lang/nimble#1840).
-      - uses: nim-lang/setup-nimble-action@v1
+      - uses: nim-lang/setup-nimble-action@b2eed48dc4ff7b6c1c5704fe9237ab6736c561cb # master: arch detection (#16)
         with:
           nimble-version: ${{ env.NIMBLE_CHANNEL }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -65,6 +65,13 @@ jobs:
         # Through the Nimble package, the same path a consumer takes.
         shell: bash
         run: make libsds
+
+      - name: Inspect libsds
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          file build/libsds.dylib
+          nm -gU build/libsds.dylib | grep -E ' _sds_' || echo "no _sds_ symbols exported"
 
       - name: Export cgo flags
         # The Makefile owns them: they differ per platform.
