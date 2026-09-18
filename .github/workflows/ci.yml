@@ -45,11 +45,18 @@ jobs:
 
       # Resolving and compiling the Nim dependencies dominates this job.
       # nimble.paths holds absolute paths, so the key is per-runner-OS.
+      # Key on the Nimble build itself: the channel name is a moving label, and
+      # a tree built by one Nimble must not be restored under another.
+      - name: Identify the Nimble build
+        id: nimble
+        shell: bash
+        run: echo "build=$(nimble --version | grep -m1 '^nimble v' | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Cache Nim dependencies
         uses: actions/cache@v4
         with:
           path: nimbledeps
-          key: nimbledeps-v2-${{ matrix.os }}-${{ env.NIMBLE_CHANNEL }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
+          key: nimbledeps-${{ matrix.os }}-${{ steps.nimble.outputs.build }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
 
       - name: Resolve Nim dependencies
         shell: bash
