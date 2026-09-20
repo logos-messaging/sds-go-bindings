@@ -11,7 +11,8 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  NIMBLE_CHANNEL: 'nightly'
+  # Pinned rather than a channel: nightly moves under us.
+  NIMBLE_COMMIT: '68ba20e753ba63d11fb8b60974e981afca376f97'
 
 jobs:
   build-test-lint:
@@ -30,7 +31,7 @@ jobs:
       # in preference to this one (nim-lang/nimble#1840).
       - uses: nim-lang/setup-nimble-action@b2eed48dc4ff7b6c1c5704fe9237ab6736c561cb # master: arch detection (#16)
         with:
-          nimble-version: ${{ env.NIMBLE_CHANNEL }}
+          nimble-version: ${{ env.NIMBLE_COMMIT }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # nim-lsquic vendors boringssl, whose test paths overrun the 260-char
@@ -44,14 +45,6 @@ jobs:
           "TMP=C:\T"  >> $env:GITHUB_ENV
 
       # Resolving and compiling the Nim dependencies dominates this job.
-      # nimble.paths holds absolute paths, so the key is per-runner-OS.
-      # Key on the Nimble build itself: the channel name is a moving label, and
-      # a tree built by one Nimble must not be restored under another.
-      - name: Identify the Nimble build
-        id: nimble
-        shell: bash
-        run: echo "build=$(nimble --version | grep -m1 '^nimble v' | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_OUTPUT"
-
       - name: Cache Nim dependencies
         uses: actions/cache@v4
         with:
@@ -60,29 +53,16 @@ jobs:
           path: |
             nimbledeps
             ~/.nimble/nimbinaries
-          key: nimbledeps-nimbinaries-${{ matrix.os }}-${{ steps.nimble.outputs.build }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
+          key: nimbledeps-${{ matrix.os }}-${{ env.NIMBLE_COMMIT }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
 
       - name: Resolve Nim dependencies
         shell: bash
         run: make deps
 
-      - name: Report the toolchain Nimble settled on
-        shell: bash
-        run: |
-          nimble --version | head -1
-          command -v nim && nim --version | head -1 || echo "no nim on PATH"
-
       - name: Build libsds
         # Through the Nimble package, the same path a consumer takes.
         shell: bash
         run: make libsds
-
-      - name: Inspect libsds
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          file build/libsds.dylib
-          nm -gU build/libsds.dylib | grep -E ' _sds_' || echo "no _sds_ symbols exported"
 
       - name: Export cgo flags
         # The Makefile owns them: they differ per platform.
