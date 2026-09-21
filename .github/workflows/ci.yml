@@ -15,7 +15,7 @@ env:
   NIMBLE_COMMIT: '68ba20e753ba63d11fb8b60974e981afca376f97'
 
 jobs:
-  build-test-lint:
+  build-test:
     name: 'go / ${{ matrix.os }}'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -75,16 +75,33 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Build lint stubs
-        run: go build -tags lint ./...
-
       - name: Vet
         run: go vet ./...
 
       - name: Test
         run: go test -race ./...
 
+  lint:
+    name: 'lint'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Type-checking cgo needs only the header, so no Nim build here.
+      - name: Fetch libsds.h
+        run: |
+          rev=$(jq -r .packages.sds.vcsRevision nimble.lock)
+          mkdir -p build
+          curl -fsSL -o build/libsds.h "https://raw.githubusercontent.com/logos-messaging/nim-sds/$rev/library/libsds.h"
+          echo "CGO_CFLAGS=-I$PWD/build" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build lint stubs
+        run: go build -tags lint ./...
+
       - uses: golangci/golangci-lint-action@v8
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
         with:
           version: v2.4.0
