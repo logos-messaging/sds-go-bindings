@@ -5,26 +5,28 @@ NIMBLE ?= nimble
 GO ?= go
 
 LIB_DIR ?= $(CURDIR)/build
-LIB_EXT ?= $(if $(filter Darwin,$(shell uname -s)),dylib,so)
+LIB_EXT ?= $(if $(filter Windows_NT,$(OS)),dll,$(if $(filter Darwin,$(shell uname -s)),dylib,so))
+
 LIB := $(LIB_DIR)/libsds.$(LIB_EXT)
 
-export CGO_CFLAGS  = -I$(LIB_DIR)
-export CGO_LDFLAGS = -L$(LIB_DIR) -lsds -Wl,-rpath,$(LIB_DIR)
+# Windows has no -rpath; the loader uses PATH.
+ifneq ($(LIB_EXT),dll)
+    LIB_RPATH := -Wl,-rpath,$(LIB_DIR)
+endif
 
-.PHONY: deps libsds build test lint clean
+export CGO_CFLAGS  = -I$(LIB_DIR)
+export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
+
+.PHONY: deps libsds build test lint print-cgo clean
 
 deps: nimble.paths ##@build Resolve the Nim dependencies
 
-nimble.paths:
+nimble.paths: nimble.lock sds_go_bindings.nimble
 	$(NIMBLE) setup --localdeps -y
 
-# nimble.paths is the resolution nimble actually settled on: it names the
-# nim-sds package directory, and it carries the --path set the compile needs,
-# since the package sits outside this tree where Nim finds no ancestor
-# config.nims.
+# nim-sds installs outside this tree, so the compile needs nimble.paths.
 $(LIB): | nimble.paths
-	SDS_PKG_DIR="$$(grep -om1 '/[^"]*/sds-[0-9][^"/]*' $(CURDIR)/nimble.paths)" \
-		LIBSDS_OUT="$(LIB_DIR)" \
+	LIBSDS_OUT="$(LIB_DIR)" \
 		NIM_PARAMS="$$NIM_PARAMS $$(tr '\n' ' ' < $(CURDIR)/nimble.paths)" \
 		$(NIMBLE) libsds
 	@test -f $@ || (echo "ERROR: $@ was not produced" && exit 1)
@@ -44,6 +46,10 @@ test: $(LIB) ##@test Run the Go tests; TEST=<name> to select one
 lint: $(LIB) ##@test Vet and build the lint stubs
 	$(GO) vet ./...
 	$(GO) build -tags lint ./...
+
+print-cgo: ##@build Print the cgo flags, for a caller that runs Go itself
+	@echo 'CGO_CFLAGS=$(CGO_CFLAGS)'
+	@echo 'CGO_LDFLAGS=$(CGO_LDFLAGS)'
 
 clean:
 	@rm -rf $(LIB_DIR) nimble.paths nimbledeps

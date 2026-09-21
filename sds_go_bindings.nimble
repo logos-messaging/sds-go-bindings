@@ -23,26 +23,31 @@ srcDir = "internal/nimble/src"
 skipDirs = @["sds", "internal"]
 
 ### Dependencies
-requires "nim == 2.2.4"
-requires "https://github.com/logos-messaging/nim-sds#2fec23a"
+requires "nim == 2.2.6"
+requires "https://github.com/logos-messaging/nim-sds#04441cb"
 
 ### Helpers
 
 proc nimblePkgDir(name: string): string =
-  ## Where the dependency was installed. Prefer what the caller resolved:
-  ## `nimble path` prints one line per installed version and exits 0 even when
-  ## the package is missing, so a shared ~/.nimble with an older copy silently
-  ## wins over the pin above.
+  ## Where the dependency was installed. `nimble path` prints one line per
+  ## installed version and exits 0 even when the package is missing.
   result = getEnv("SDS_PKG_DIR")
-  if result.len == 0:
-    let (output, _) = gorgeEx("nimble path " & name)
-    for line in output.strip().splitLines():
-      let candidate = line.strip()
-      if candidate.isAbsolute() and dirExists(candidate / "library"):
-        result = candidate
-        break
-  if not result.isAbsolute() or not dirExists(result):
-    raise newException(CatchableError, name & " unresolved - run `nimble setup`")
+  if result.len > 0:
+    if not dirExists(result / "library"):
+      raise newException(CatchableError,
+        "SDS_PKG_DIR=" & result & " has no library/")
+    return
+
+  let (output, exitCode) = gorgeEx("nimble path " & name)
+  for line in output.strip().splitLines():
+    let candidate = line.strip()
+    if candidate.isAbsolute() and dirExists(candidate / "library"):
+      return candidate
+
+  raise newException(CatchableError,
+    name & " unresolved. `nimble path " & name & "` exited " & $exitCode &
+    " and returned:\n" & output.strip() &
+    "\nSet SDS_PKG_DIR to the package directory to bypass this lookup.")
 
 ### Tasks
 
@@ -55,7 +60,11 @@ proc runNimSdsTask(taskName: string) =
 
   let outDir = getEnv("LIBSDS_OUT")
   if outDir.len > 0:
-    let lib = DynlibFormat % "sds"
+    # nim-sds names every platform's output libsds.*; DynlibFormat would drop
+    # the lib prefix on Windows.
+    let lib = "libsds." & (when defined(windows): "dll"
+                           elif defined(macosx): "dylib"
+                           else: "so")
     mkDir outDir
     cpFile pkgDir / "build" / lib, outDir / lib
     cpFile pkgDir / "library" / "libsds.h", outDir / "libsds.h"

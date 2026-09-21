@@ -11,38 +11,62 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  NIM_VERSION: '2.2.4'
-  # The nimble bundled with 2.2.4 is 0.18.2, which hashes packages differently
-  # and so cannot verify a lock file written by 0.22.x.
-  NIMBLE_VERSION: '0.22.2'
+  # Pinned rather than a channel: nightly moves under us.
+  NIMBLE_COMMIT: '68ba20e753ba63d11fb8b60974e981afca376f97'
 
 jobs:
   build-test-lint:
-    name: 'go / ubuntu-latest'
-    runs-on: ubuntu-latest
+    name: 'go / ${{ matrix.os }}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: jiro4989/setup-nim-action@v2
+      # No compiler here: Nimble resolves the one `requires` names. Installing
+      # one also puts its bundled Nimble on PATH (nim-lang/nimble#1840).
+      - uses: nim-lang/setup-nimble-action@b2eed48dc4ff7b6c1c5704fe9237ab6736c561cb # master: arch detection (#16)
         with:
-          nim-version: ${{ env.NIM_VERSION }}
+          nimble-version: ${{ env.NIMBLE_COMMIT }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install nimble ${{ env.NIMBLE_VERSION }}
+      # boringssl test paths overrun the 260-char limit from the default temp.
+      - name: Shorten TEMP path for nimble
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          curl -fsSL -o /tmp/nimble.tar.gz \
-            "https://github.com/nim-lang/nimble/releases/download/v${NIMBLE_VERSION}/nimble-linux_x64.tar.gz"
-          mkdir -p "$HOME/.nimble/bin"
-          tar -xzf /tmp/nimble.tar.gz -C "$HOME/.nimble/bin"
-          chmod +x "$HOME/.nimble/bin/nimble"
-          nimble --version | head -2
+          New-Item -ItemType Directory -Force -Path C:\T | Out-Null
+          "TEMP=C:\T" >> $env:GITHUB_ENV
+          "TMP=C:\T"  >> $env:GITHUB_ENV
+
+      - name: Cache Nim dependencies
+        uses: actions/cache@v4
+        with:
+          # nimbinaries is global; without it the bootstrap grabs the newest Nim.
+          path: |
+            nimbledeps
+            ~/.nimble/nimbinaries
+          key: nimbledeps-${{ matrix.os }}-${{ env.NIMBLE_COMMIT }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
+
+      - name: Resolve Nim dependencies
+        shell: bash
+        run: make deps
 
       - name: Build libsds
-        # Through the Nimble package, the same path a consumer takes.
-        run: |
-          make deps
-          make libsds
-          echo "CGO_CFLAGS=-I$PWD/build" >> "$GITHUB_ENV"
-          echo "CGO_LDFLAGS=-L$PWD/build -lsds -Wl,-rpath,$PWD/build" >> "$GITHUB_ENV"
+        shell: bash
+        run: make libsds
+
+      - name: Export cgo flags
+        shell: bash
+        run: make print-cgo >> "$GITHUB_ENV"
+
+      # Windows has no rpath.
+      - name: Put libsds on PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "$env:GITHUB_WORKSPACE\build" >> $env:GITHUB_PATH
 
       - uses: actions/setup-go@v5
         with:
@@ -57,10 +81,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # nim-ffi's one-entry request channel wedges under stress on Windows runners.
       - name: Test
-        run: go test -race ./...
+        shell: bash
+        run: go test -race ${{ runner.os == 'Windows' && '-skip TestStress_' || '' }} ./...
 
       - uses: golangci/golangci-lint-action@v8
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         with:
           version: v2.4.0
