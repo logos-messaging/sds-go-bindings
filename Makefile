@@ -6,13 +6,7 @@ GO ?= go
 
 LIB_DIR ?= $(CURDIR)/build
 
-ifeq ($(OS),Windows_NT)
-    LIB_EXT ?= dll
-else ifeq ($(shell uname -s),Darwin)
-    LIB_EXT ?= dylib
-else
-    LIB_EXT ?= so
-endif
+LIB_EXT ?= $(if $(filter Windows_NT,$(OS)),dll,$(if $(filter Darwin,$(shell uname -s)),dylib,so))
 
 LIB := $(LIB_DIR)/libsds.$(LIB_EXT)
 
