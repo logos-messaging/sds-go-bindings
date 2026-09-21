@@ -5,7 +5,6 @@ NIMBLE ?= nimble
 GO ?= go
 
 LIB_DIR ?= $(CURDIR)/build
-
 LIB_EXT ?= $(if $(filter Windows_NT,$(OS)),dll,$(if $(filter Darwin,$(shell uname -s)),dylib,so))
 
 LIB := $(LIB_DIR)/libsds.$(LIB_EXT)
@@ -20,11 +19,9 @@ export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
 
 .PHONY: deps libsds build test lint print-cgo clean
 
-# Always re-resolves: a restored nimbledeps is only an accelerator.
-deps: ##@build Resolve the Nim dependencies
-	$(NIMBLE) setup --localdeps -y
+deps: nimble.paths ##@build Resolve the Nim dependencies
 
-nimble.paths:
+nimble.paths: nimble.lock sds_go_bindings.nimble
 	$(NIMBLE) setup --localdeps -y
 
 # nim-sds installs outside this tree, so the compile needs nimble.paths.
