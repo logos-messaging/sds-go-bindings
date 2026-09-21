@@ -8,9 +8,16 @@ author      = "Logos"
 description = "Go bindings for nim-sds"
 license     = "MIT or Apache License 2.0"
 
-# A Go module. The Nimble package exists so consumers get a matching libsds.
-# Pinned to a commit: nim-sds has no v0.4 tag yet.
-# srcDir is empty and the Go tree is skipped, so nothing reaches a dependent.
+# This is a Go module. The Nimble package exists so consumers get a libsds
+# whose C ABI matches these bindings, resolved and built the same way.
+#
+# Pinned to a commit: nim-sds has no v0.4 tag yet, so a range cannot express
+# "at least the one whose installed package can build libsds". This becomes a
+# range once it publishes one, and consumers can then upgrade without a release
+# here.
+#
+# srcDir points at an empty directory and the Go tree is skipped, so nothing is
+# contributed to a dependent's Nim path.
 srcDir = "internal/nimble/src"
 
 skipDirs = @["sds", "internal"]
