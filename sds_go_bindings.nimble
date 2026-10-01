@@ -23,8 +23,8 @@ srcDir = "internal/nimble/src"
 skipDirs = @["sds", "internal"]
 
 ### Dependencies
-requires "nim == 2.2.6"
-requires "https://github.com/logos-messaging/nim-sds#04441cb"
+requires "nim >= 2.2.6"
+requires "https://github.com/logos-messaging/nim-sds#010d59a2"
 
 ### Helpers
 

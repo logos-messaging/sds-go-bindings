@@ -11,8 +11,7 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  # Pinned rather than a channel: nightly moves under us.
-  NIMBLE_COMMIT: '68ba20e753ba63d11fb8b60974e981afca376f97'
+  NIMBLE_VERSION: '0.26.0'
 
 jobs:
   build-test-lint:
@@ -29,7 +28,7 @@ jobs:
       # one also puts its bundled Nimble on PATH (nim-lang/nimble#1840).
       - uses: nim-lang/setup-nimble-action@b2eed48dc4ff7b6c1c5704fe9237ab6736c561cb # master: arch detection (#16)
         with:
-          nimble-version: ${{ env.NIMBLE_COMMIT }}
+          nimble-version: ${{ env.NIMBLE_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # boringssl test paths overrun the 260-char limit from the default temp.
@@ -48,7 +47,7 @@ jobs:
           path: |
             nimbledeps
             ~/.nimble/nimbinaries
-          key: nimbledeps-${{ matrix.os }}-${{ env.NIMBLE_COMMIT }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
+          key: nimbledeps-${{ matrix.os }}-${{ env.NIMBLE_VERSION }}-${{ hashFiles('nimble.lock', 'sds_go_bindings.nimble') }}
 
       - name: Resolve Nim dependencies
         shell: bash
