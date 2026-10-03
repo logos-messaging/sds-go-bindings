@@ -51,29 +51,31 @@ proc nimblePkgDir(name: string): string =
 
 ### Tasks
 
-proc runNimSdsTask(taskName: string) =
-  ## Delegates to nim-sds' own build task. Consumers set NIM_PARAMS (their
-  ## resolved --path set) and LIBSDS_OUT; neither is decided here.
+# nim-sds names every platform's output libsds.*; DynlibFormat would drop the
+# lib prefix on Windows.
+const hostLib = "libsds." & (when defined(windows): "dll"
+                             elif defined(macosx): "dylib"
+                             else: "so")
+
+proc runNimSdsTask(taskName, lib: string) =
+  ## Delegates to nim-sds' own build task, then copies `lib` and the header to
+  ## LIBSDS_OUT. Consumers set NIM_PARAMS (their resolved --path set) and
+  ## LIBSDS_OUT; neither is decided here.
   let pkgDir = nimblePkgDir("sds")
   withDir pkgDir:
     exec "nimble " & taskName
 
   let outDir = getEnv("LIBSDS_OUT")
   if outDir.len > 0:
-    # nim-sds names every platform's output libsds.*; DynlibFormat would drop
-    # the lib prefix on Windows.
-    let lib = "libsds." & (when defined(windows): "dll"
-                           elif defined(macosx): "dylib"
-                           else: "so")
     mkDir outDir
     cpFile pkgDir / "build" / lib, outDir / lib
     cpFile pkgDir / "library" / "libsds.h", outDir / "libsds.h"
 
 task libsds, "Build the libsds these bindings link against":
-  runNimSdsTask("libsds")
+  runNimSdsTask("libsds", hostLib)
 
 task libsdsAndroid, "Build libsds for Android; ARCH selects the architecture":
-  runNimSdsTask("libsdsAndroid")
+  runNimSdsTask("libsdsAndroid", "libsds.so")
 
 task libsdsIOS, "Build libsds for iOS":
-  runNimSdsTask("libsdsIOS")
+  runNimSdsTask("libsdsIOS", "libsds.a")
