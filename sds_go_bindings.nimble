@@ -24,7 +24,7 @@ skipDirs = @["sds", "internal"]
 
 ### Dependencies
 requires "nim >= 2.2.6"
-requires "https://github.com/logos-messaging/nim-sds#010d59a2"
+requires "https://github.com/logos-messaging/nim-sds#ee2553a4"
 
 ### Helpers
 

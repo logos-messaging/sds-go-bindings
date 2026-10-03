@@ -26,7 +26,7 @@ import (
 // Run with: go test -race -run TestStress
 func TestStress_ConcurrentManagersWithEvents(t *testing.T) {
 	if os.Getenv("STRESS_FFI_RECYCLE") == "" {
-		t.Skip("crashes libsds: the watchdog of a recycled FFI context calls its cleared eventCallback (nim-ffi 0.1.5). Set STRESS_FFI_RECYCLE=1 to run.")
+		t.Skip("nim-ffi 0.3 leaves a few recycled context slots owned under this churn, so destroy fails. Set STRESS_FFI_RECYCLE=1 to run.")
 	}
 
 	aggressiveGC := os.Getenv("STRESS_AGGRESSIVE_GC") != ""
