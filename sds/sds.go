@@ -3,9 +3,27 @@
 package sds
 
 /*
-	#include <libsds.h>
+	#include <stdint.h>
 	#include <stdlib.h>
 	#include <string.h>
+
+	// The raw libsds exports. libsds.h is not included: its generated helpers
+	// need TinyCBOR, and these bindings encode CBOR in Go instead.
+	#define RET_OK         0
+	#define RET_STALE_WARN 3
+
+	typedef void (*FFICallback)(int ret, const char* msg, size_t len, void* userData);
+	typedef void (*SdsRetrievalHintProvider)(const char* messageId, char** hint, size_t* hintLen, void* userData);
+
+	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
+	int sds_wrap_outgoing_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_unwrap_received_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_mark_dependencies_met(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_reset(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_start_periodic_tasks(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_destroy(void* ctx);
+	uint64_t sds_add_event_listener(void* ctx, const char* eventName, FFICallback callback, void* userData);
+	int sds_set_retrieval_hint_provider(void* ctx, SdsRetrievalHintProvider callback, void* userData);
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, void* userData);
 
@@ -72,43 +90,43 @@ package sds
 	// SdsGoCallback is the result callback for the request/response FFI calls.
 	void SdsGoCallback(int ret, char* msg, size_t len, void* resp);
 
-	static void* cGoSdsCreate(const char* configJson, void* resp) {
-		return sds_create(configJson, (SdsCallBack) SdsGoCallback, resp);
+	static void* cGoSdsCreate(const void* req, size_t reqLen, void* resp) {
+		return sds_create((const uint8_t*) req, reqLen, (FFICallback) SdsGoCallback, resp);
 	}
 
-	static void cGoSdsSetEventCallback(void* ctx) {
+	static void cGoSdsAddEventListener(void* ctx, const char* eventName) {
 		// 'sdsGlobalEventCallback' is shared by all manager instances; we pass the
 		// ctx as userData so the dispatcher can route the event to the instance
 		// that registered it (cgo can export Go funcs but not methods).
-		sds_set_event_callback(ctx, (SdsCallBack) sdsGlobalEventCallback, ctx);
+		sds_add_event_listener(ctx, eventName, (FFICallback) sdsGlobalEventCallback, ctx);
 	}
 
 	static int cGoSdsSetRetrievalHintProvider(void* ctx) {
 		return sds_set_retrieval_hint_provider(ctx, (SdsRetrievalHintProvider) sdsGlobalRetrievalHintProvider, ctx);
 	}
 
-	static int cGoSdsWrapOutgoingMessage(void* ctx, const char* reqJson, void* resp) {
-		return sds_wrap_outgoing_message(ctx, (SdsCallBack) SdsGoCallback, resp, reqJson);
+	static int cGoSdsWrapOutgoingMessage(void* ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_wrap_outgoing_message(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsUnwrapReceivedMessage(void* ctx, const char* reqJson, void* resp) {
-		return sds_unwrap_received_message(ctx, (SdsCallBack) SdsGoCallback, resp, reqJson);
+	static int cGoSdsUnwrapReceivedMessage(void* ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_unwrap_received_message(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsMarkDependenciesMet(void* ctx, const char* reqJson, void* resp) {
-		return sds_mark_dependencies_met(ctx, (SdsCallBack) SdsGoCallback, resp, reqJson);
+	static int cGoSdsMarkDependenciesMet(void* ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_mark_dependencies_met(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsReset(void* ctx, void* resp) {
-		return sds_reset(ctx, (SdsCallBack) SdsGoCallback, resp);
+	static int cGoSdsReset(void* ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_reset(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsStartPeriodicTasks(void* ctx, void* resp) {
-		return sds_start_periodic_tasks(ctx, (SdsCallBack) SdsGoCallback, resp);
+	static int cGoSdsStartPeriodicTasks(void* ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_start_periodic_tasks(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsDestroy(void* ctx, void* resp) {
-		return sds_destroy(ctx, (SdsCallBack) SdsGoCallback, resp);
+	static int cGoSdsDestroy(void* ctx) {
+		return sds_destroy(ctx);
 	}
 */
 import "C"
@@ -116,10 +134,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"unsafe"
 
+	"github.com/fxamacker/cbor/v2"
 	"go.uber.org/zap"
 )
 
@@ -149,56 +167,55 @@ func awaitResp(fire func(resp unsafe.Pointer)) unsafe.Pointer {
 	return resp
 }
 
-// jsonByteArray marshals to a JSON array of byte values (e.g. [104,105]).
-// libsds (nim-ffi) (de)serialises `seq[byte]` as a JSON number array, NOT
-// base64 — Go's default []byte marshalling (base64 string) would not decode.
-type jsonByteArray []byte
-
-func (b jsonByteArray) MarshalJSON() ([]byte, error) {
-	if len(b) == 0 {
-		return []byte("[]"), nil
-	}
-	buf := make([]byte, 0, len(b)*4+2)
-	buf = append(buf, '[')
-	for i, v := range b {
-		if i > 0 {
-			buf = append(buf, ',')
-		}
-		buf = strconv.AppendUint(buf, uint64(v), 10)
-	}
-	buf = append(buf, ']')
-	return buf, nil
+// Request and reply payloads, CBOR-encoded. Field names must match the {.ffi.}
+// objects in nim-sds' library/libsds.nim; each request travels inside the
+// envelope named after the Nim proc's parameter.
+type sdsConfig struct {
+	ParticipantId string `cbor:"participantId"`
 }
 
-// Request payloads. Field names/types must match the {.ffi.} request objects
-// declared in nim-sds' library/libsds.nim. Responses come back as JSON too;
-// incoming []byte fields decode fine from a JSON number array.
-type sdsConfig struct {
-	ParticipantId string `json:"participantId"`
+type sdsCreateRequest struct {
+	Config sdsConfig `cbor:"config"`
 }
 
 type sdsWrapRequest struct {
-	Message   jsonByteArray `json:"message"`
-	MessageId string        `json:"messageId"`
-	ChannelId string        `json:"channelId"`
+	Message   []byte `cbor:"message"`
+	MessageId string `cbor:"messageId"`
+	ChannelId string `cbor:"channelId"`
 }
 
 type sdsWrapResponse struct {
-	Message []byte `json:"message"`
+	Message []byte `cbor:"message"`
 }
 
 type sdsUnwrapRequest struct {
-	Message jsonByteArray `json:"message"`
+	Message []byte `cbor:"message"`
 }
 
 type sdsMarkDependenciesRequest struct {
-	MessageIds []string `json:"messageIds"`
-	ChannelId  string   `json:"channelId"`
+	MessageIds []string `cbor:"messageIds"`
+	ChannelId  string   `cbor:"channelId"`
+}
+
+type sdsRequest[T any] struct {
+	Req T `cbor:"req"`
+}
+
+type sdsEmptyRequest struct{}
+
+// eventNames are the events libsds fires; each needs its own listener.
+var eventNames = []string{
+	"message_ready",
+	"message_sent",
+	"missing_dependencies",
+	"periodic_sync",
+	"repair_ready",
 }
 
 //export SdsGoCallback
 func SdsGoCallback(ret C.int, msg *C.char, length C.size_t, resp unsafe.Pointer) {
-	if resp == nil {
+	// A stale warning only reports a slow handler; the terminal reply follows.
+	if resp == nil || ret == C.RET_STALE_WARN {
 		return
 	}
 	m := (*C.SdsResp)(resp)
@@ -218,18 +235,31 @@ func respString(resp unsafe.Pointer) string {
 	return C.GoStringN(C.getMyCharPtr(resp), C.int(C.getMyCharLen(resp)))
 }
 
-// request dispatches one FFI call and blocks until the result callback fires.
+func respBytes(resp unsafe.Pointer) []byte {
+	return C.GoBytes(unsafe.Pointer(C.getMyCharPtr(resp)), C.int(C.getMyCharLen(resp)))
+}
+
+// request CBOR-encodes req, dispatches one FFI call and blocks until the result
+// callback fires. It returns the CBOR-encoded reply.
 func (rm *ReliabilityManager) request(
 	errPrefix string,
-	fn func(resp unsafe.Pointer) C.int,
-) (string, error) {
-	resp := awaitResp(func(r unsafe.Pointer) { fn(r) })
+	req any,
+	fn func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int,
+) ([]byte, error) {
+	reqCbor, err := cbor.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to encode request: %w", errPrefix, err)
+	}
+	cReq := C.CBytes(reqCbor)
+	defer C.free(cReq)
+
+	resp := awaitResp(func(r unsafe.Pointer) { fn(cReq, C.size_t(len(reqCbor)), r) })
 	defer C.freeResp(resp)
 
 	if C.getRet(resp) != C.RET_OK {
-		return "", fmt.Errorf("%s: %s", errPrefix, respString(resp))
+		return nil, fmt.Errorf("%s: %s", errPrefix, respString(resp))
 	}
-	return respString(resp), nil
+	return respBytes(resp), nil
 }
 
 func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
@@ -244,15 +274,15 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 	rm.logger.Info("creating new reliability manager")
 
 	// An empty participantId disables SDS-R, matching the previous behaviour.
-	configJson, err := json.Marshal(sdsConfig{ParticipantId: ""})
+	reqCbor, err := cbor.Marshal(sdsCreateRequest{Config: sdsConfig{ParticipantId: ""}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode config: %w", err)
 	}
-	cConfig := C.CString(string(configJson))
-	defer C.free(unsafe.Pointer(cConfig))
+	cReq := C.CBytes(reqCbor)
+	defer C.free(cReq)
 
 	resp := awaitResp(func(r unsafe.Pointer) {
-		rm.rmCtx = C.cGoSdsCreate(cConfig, r)
+		rm.rmCtx = C.cGoSdsCreate(cReq, C.size_t(len(reqCbor)), r)
 	})
 	defer C.freeResp(resp)
 
@@ -260,10 +290,14 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 		return nil, fmt.Errorf("error creating reliability manager: %s", respString(resp))
 	}
 
-	// Register before wiring the event callback, since the callback routes by
-	// ctx through the registry.
+	// Register before wiring the event listeners, since they route by ctx
+	// through the registry.
 	registerReliabilityManager(rm)
-	C.cGoSdsSetEventCallback(rm.rmCtx)
+	for _, name := range eventNames {
+		cName := C.CString(name)
+		C.cGoSdsAddEventListener(rm.rmCtx, cName)
+		C.free(unsafe.Pointer(cName))
+	}
 	C.cGoSdsSetRetrievalHintProvider(rm.rmCtx)
 
 	rm.logger.Debug("successfully created reliability manager")
@@ -307,11 +341,8 @@ func (rm *ReliabilityManager) Cleanup() error {
 
 	rm.logger.Debug("cleaning up reliability manager")
 
-	_, err := rm.request("error CleanupReliabilityManager", func(resp unsafe.Pointer) C.int {
-		return C.cGoSdsDestroy(rm.rmCtx, resp)
-	})
-	if err != nil {
-		return err
+	if ret := C.cGoSdsDestroy(rm.rmCtx); ret != C.RET_OK {
+		return fmt.Errorf("error CleanupReliabilityManager: code %d", int(ret))
 	}
 
 	unregisterReliabilityManager(rm)
@@ -326,9 +357,10 @@ func (rm *ReliabilityManager) Reset() error {
 
 	rm.logger.Debug("resetting reliability manager")
 
-	_, err := rm.request("error ResetReliabilityManager", func(resp unsafe.Pointer) C.int {
-		return C.cGoSdsReset(rm.rmCtx, resp)
-	})
+	_, err := rm.request("error ResetReliabilityManager", sdsEmptyRequest{},
+		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
+			return C.cGoSdsReset(rm.rmCtx, req, reqLen, resp)
+		})
 	if err != nil {
 		return err
 	}
@@ -345,26 +377,21 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	logger := rm.logger.With(zap.String("messageId", string(messageId)))
 	logger.Debug("wrapping outgoing message")
 
-	reqJson, err := json.Marshal(sdsWrapRequest{
+	req := sdsRequest[sdsWrapRequest]{Req: sdsWrapRequest{
 		Message:   message,
 		MessageId: string(messageId),
 		ChannelId: channelId,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode wrap request: %w", err)
-	}
-	cReq := C.CString(string(reqJson))
-	defer C.free(unsafe.Pointer(cReq))
-
-	respJson, err := rm.request("error WrapOutgoingMessage", func(resp unsafe.Pointer) C.int {
-		return C.cGoSdsWrapOutgoingMessage(rm.rmCtx, cReq, resp)
-	})
+	}}
+	reply, err := rm.request("error WrapOutgoingMessage", req,
+		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
+			return C.cGoSdsWrapOutgoingMessage(rm.rmCtx, req, reqLen, resp)
+		})
 	if err != nil {
 		return nil, err
 	}
 
 	var wrapResp sdsWrapResponse
-	if err := json.Unmarshal([]byte(respJson), &wrapResp); err != nil {
+	if err := cbor.Unmarshal(reply, &wrapResp); err != nil {
 		return nil, fmt.Errorf("failed to decode wrap response: %w", err)
 	}
 
@@ -377,18 +404,18 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 		return nil, errEmptyReliabilityManager
 	}
 
-	reqJson, err := json.Marshal(sdsUnwrapRequest{Message: message})
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode unwrap request: %w", err)
-	}
-	cReq := C.CString(string(reqJson))
-	defer C.free(unsafe.Pointer(cReq))
-
-	respJson, err := rm.request("error UnwrapReceivedMessage", func(resp unsafe.Pointer) C.int {
-		return C.cGoSdsUnwrapReceivedMessage(rm.rmCtx, cReq, resp)
-	})
+	reply, err := rm.request("error UnwrapReceivedMessage", sdsRequest[sdsUnwrapRequest]{Req: sdsUnwrapRequest{Message: message}},
+		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
+			return C.cGoSdsUnwrapReceivedMessage(rm.rmCtx, req, reqLen, resp)
+		})
 	if err != nil {
 		return nil, err
+	}
+
+	// libsds builds the unwrap result as JSON and returns it as a CBOR string.
+	var respJson string
+	if err := cbor.Unmarshal(reply, &respJson); err != nil {
+		return nil, fmt.Errorf("failed to decode unwrap response: %w", err)
 	}
 
 	var unwrappedMessage UnwrappedMessage
@@ -414,16 +441,11 @@ func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channe
 	for i, id := range messageIDs {
 		ids[i] = string(id)
 	}
-	reqJson, err := json.Marshal(sdsMarkDependenciesRequest{MessageIds: ids, ChannelId: channelId})
-	if err != nil {
-		return fmt.Errorf("failed to encode mark-dependencies request: %w", err)
-	}
-	cReq := C.CString(string(reqJson))
-	defer C.free(unsafe.Pointer(cReq))
-
-	_, err = rm.request("error MarkDependenciesMet", func(resp unsafe.Pointer) C.int {
-		return C.cGoSdsMarkDependenciesMet(rm.rmCtx, cReq, resp)
-	})
+	req := sdsRequest[sdsMarkDependenciesRequest]{Req: sdsMarkDependenciesRequest{MessageIds: ids, ChannelId: channelId}}
+	_, err := rm.request("error MarkDependenciesMet", req,
+		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
+			return C.cGoSdsMarkDependenciesMet(rm.rmCtx, req, reqLen, resp)
+		})
 	if err != nil {
 		return err
 	}
@@ -439,9 +461,10 @@ func (rm *ReliabilityManager) StartPeriodicTasks() error {
 
 	rm.logger.Debug("starting periodic tasks")
 
-	_, err := rm.request("error StartPeriodicTasks", func(resp unsafe.Pointer) C.int {
-		return C.cGoSdsStartPeriodicTasks(rm.rmCtx, resp)
-	})
+	_, err := rm.request("error StartPeriodicTasks", sdsEmptyRequest{},
+		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
+			return C.cGoSdsStartPeriodicTasks(rm.rmCtx, req, reqLen, resp)
+		})
 	if err != nil {
 		return err
 	}
