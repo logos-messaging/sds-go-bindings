@@ -3,7 +3,6 @@ package sds
 import (
 	"encoding/json"
 	"sync"
-	"unsafe"
 
 	"go.uber.org/zap"
 )
@@ -22,7 +21,7 @@ type EventCallbacks struct {
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
 type ReliabilityManager struct {
 	logger    *zap.Logger
-	rmCtx     unsafe.Pointer
+	rmCtx     uintptr
 	callbacks EventCallbacks
 }
 
@@ -31,7 +30,7 @@ type ReliabilityManager struct {
 // callback in the go side, We register all the rm's that we create
 // so we can later obtain which instance of `ReliabilityManager` it should
 // be invoked depending on the ctx received
-var rmRegistry map[unsafe.Pointer]*ReliabilityManager
+var rmRegistry map[uintptr]*ReliabilityManager
 
 // rmRegistryMu guards rmRegistry. libsds invokes the global callbacks on its
 // own worker/event threads, so reads from those callbacks race the register/
@@ -39,12 +38,12 @@ var rmRegistry map[unsafe.Pointer]*ReliabilityManager
 var rmRegistryMu sync.RWMutex
 
 func init() {
-	rmRegistry = make(map[unsafe.Pointer]*ReliabilityManager)
+	rmRegistry = make(map[uintptr]*ReliabilityManager)
 }
 
 // lookupReliabilityManager resolves the manager for a ctx under the read lock.
 // Used by the global callbacks, which run on libsds threads.
-func lookupReliabilityManager(ctx unsafe.Pointer) (*ReliabilityManager, bool) {
+func lookupReliabilityManager(ctx uintptr) (*ReliabilityManager, bool) {
 	rmRegistryMu.RLock()
 	defer rmRegistryMu.RUnlock()
 	rm, ok := rmRegistry[ctx]
