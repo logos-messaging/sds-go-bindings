@@ -25,9 +25,9 @@ package sds
 	uint64_t sds_add_event_listener(void* ctx, const char* eventName, FFICallback callback, void* userData);
 	int sds_set_retrieval_hint_provider(void* ctx, SdsRetrievalHintProvider callback, void* userData);
 
-	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, void* userData);
+	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
-	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, void* userData);
+	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, uintptr_t ctx);
 
 	typedef struct {
 		int ret;
@@ -90,43 +90,53 @@ package sds
 	// SdsGoCallback is the result callback for the request/response FFI calls.
 	void SdsGoCallback(int ret, char* msg, size_t len, void* resp);
 
-	static void* cGoSdsCreate(const void* req, size_t reqLen, void* resp) {
-		return sds_create((const uint8_t*) req, reqLen, (FFICallback) SdsGoCallback, resp);
+	// The context is a token, not an address: it crosses into Go as uintptr_t
+	// and is widened to void* only here.
+	static uintptr_t cGoSdsCreate(const void* req, size_t reqLen, void* resp) {
+		return (uintptr_t) sds_create((const uint8_t*) req, reqLen, (FFICallback) SdsGoCallback, resp);
 	}
 
-	static void cGoSdsAddEventListener(void* ctx, const char* eventName) {
+	static void cGoSdsEventTrampoline(int ret, const char* msg, size_t len, void* userData) {
+		sdsGlobalEventCallback(ret, (char*) msg, len, (uintptr_t) userData);
+	}
+
+	static void cGoSdsRetrievalHintTrampoline(const char* messageId, char** hint, size_t* hintLen, void* userData) {
+		sdsGlobalRetrievalHintProvider((char*) messageId, hint, hintLen, (uintptr_t) userData);
+	}
+
+	static void cGoSdsAddEventListener(uintptr_t ctx, const char* eventName) {
 		// 'sdsGlobalEventCallback' is shared by all manager instances; we pass the
 		// ctx as userData so the dispatcher can route the event to the instance
 		// that registered it (cgo can export Go funcs but not methods).
-		sds_add_event_listener(ctx, eventName, (FFICallback) sdsGlobalEventCallback, ctx);
+		sds_add_event_listener((void*) ctx, eventName, (FFICallback) cGoSdsEventTrampoline, (void*) ctx);
 	}
 
-	static int cGoSdsSetRetrievalHintProvider(void* ctx) {
-		return sds_set_retrieval_hint_provider(ctx, (SdsRetrievalHintProvider) sdsGlobalRetrievalHintProvider, ctx);
+	static int cGoSdsSetRetrievalHintProvider(uintptr_t ctx) {
+		return sds_set_retrieval_hint_provider((void*) ctx, (SdsRetrievalHintProvider) cGoSdsRetrievalHintTrampoline, (void*) ctx);
 	}
 
-	static int cGoSdsWrapOutgoingMessage(void* ctx, const void* req, size_t reqLen, void* resp) {
-		return sds_wrap_outgoing_message(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	static int cGoSdsWrapOutgoingMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_wrap_outgoing_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsUnwrapReceivedMessage(void* ctx, const void* req, size_t reqLen, void* resp) {
-		return sds_unwrap_received_message(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	static int cGoSdsUnwrapReceivedMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_unwrap_received_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsMarkDependenciesMet(void* ctx, const void* req, size_t reqLen, void* resp) {
-		return sds_mark_dependencies_met(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	static int cGoSdsMarkDependenciesMet(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_mark_dependencies_met((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsReset(void* ctx, const void* req, size_t reqLen, void* resp) {
-		return sds_reset(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	static int cGoSdsReset(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_reset((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsStartPeriodicTasks(void* ctx, const void* req, size_t reqLen, void* resp) {
-		return sds_start_periodic_tasks(ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	static int cGoSdsStartPeriodicTasks(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_start_periodic_tasks((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsDestroy(void* ctx) {
-		return sds_destroy(ctx);
+	static int cGoSdsDestroy(uintptr_t ctx) {
+		return sds_destroy((void*) ctx);
 	}
 */
 import "C"
@@ -282,11 +292,11 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 	defer C.free(cReq)
 
 	resp := awaitResp(func(r unsafe.Pointer) {
-		rm.rmCtx = C.cGoSdsCreate(cReq, C.size_t(len(reqCbor)), r)
+		rm.rmCtx = uintptr(C.cGoSdsCreate(cReq, C.size_t(len(reqCbor)), r))
 	})
 	defer C.freeResp(resp)
 
-	if rm.rmCtx == nil || C.getRet(resp) != C.RET_OK {
+	if rm.rmCtx == 0 || C.getRet(resp) != C.RET_OK {
 		return nil, fmt.Errorf("error creating reliability manager: %s", respString(resp))
 	}
 
@@ -295,19 +305,19 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 	registerReliabilityManager(rm)
 	for _, name := range eventNames {
 		cName := C.CString(name)
-		C.cGoSdsAddEventListener(rm.rmCtx, cName)
+		C.cGoSdsAddEventListener(C.uintptr_t(rm.rmCtx), cName)
 		C.free(unsafe.Pointer(cName))
 	}
-	C.cGoSdsSetRetrievalHintProvider(rm.rmCtx)
+	C.cGoSdsSetRetrievalHintProvider(C.uintptr_t(rm.rmCtx))
 
 	rm.logger.Debug("successfully created reliability manager")
 	return rm, nil
 }
 
 //export sdsGlobalEventCallback
-func sdsGlobalEventCallback(callerRet C.int, msg *C.char, length C.size_t, userData unsafe.Pointer) {
+func sdsGlobalEventCallback(callerRet C.int, msg *C.char, length C.size_t, ctx C.uintptr_t) {
 	msgStr := C.GoStringN(msg, C.int(length))
-	rm, ok := lookupReliabilityManager(userData) // userData contains rm's ctx
+	rm, ok := lookupReliabilityManager(uintptr(ctx))
 	if !ok {
 		return
 	}
@@ -320,9 +330,9 @@ func sdsGlobalEventCallback(callerRet C.int, msg *C.char, length C.size_t, userD
 }
 
 //export sdsGlobalRetrievalHintProvider
-func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C.size_t, userData unsafe.Pointer) {
+func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C.size_t, ctx C.uintptr_t) {
 	msgId := C.GoString(messageId)
-	rm, ok := lookupReliabilityManager(userData)
+	rm, ok := lookupReliabilityManager(uintptr(ctx))
 	if ok {
 		if rm.callbacks.RetrievalHintProvider != nil {
 			hintBytes := rm.callbacks.RetrievalHintProvider(MessageID(msgId))
@@ -341,7 +351,7 @@ func (rm *ReliabilityManager) Cleanup() error {
 
 	rm.logger.Debug("cleaning up reliability manager")
 
-	if ret := C.cGoSdsDestroy(rm.rmCtx); ret != C.RET_OK {
+	if ret := C.cGoSdsDestroy(C.uintptr_t(rm.rmCtx)); ret != C.RET_OK {
 		return fmt.Errorf("error CleanupReliabilityManager: code %d", int(ret))
 	}
 
@@ -359,7 +369,7 @@ func (rm *ReliabilityManager) Reset() error {
 
 	_, err := rm.request("error ResetReliabilityManager", sdsEmptyRequest{},
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
-			return C.cGoSdsReset(rm.rmCtx, req, reqLen, resp)
+			return C.cGoSdsReset(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
 		return err
@@ -384,7 +394,7 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	}}
 	reply, err := rm.request("error WrapOutgoingMessage", req,
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
-			return C.cGoSdsWrapOutgoingMessage(rm.rmCtx, req, reqLen, resp)
+			return C.cGoSdsWrapOutgoingMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
 		return nil, err
@@ -406,7 +416,7 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 
 	reply, err := rm.request("error UnwrapReceivedMessage", sdsRequest[sdsUnwrapRequest]{Req: sdsUnwrapRequest{Message: message}},
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
-			return C.cGoSdsUnwrapReceivedMessage(rm.rmCtx, req, reqLen, resp)
+			return C.cGoSdsUnwrapReceivedMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
 		return nil, err
@@ -444,7 +454,7 @@ func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channe
 	req := sdsRequest[sdsMarkDependenciesRequest]{Req: sdsMarkDependenciesRequest{MessageIds: ids, ChannelId: channelId}}
 	_, err := rm.request("error MarkDependenciesMet", req,
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
-			return C.cGoSdsMarkDependenciesMet(rm.rmCtx, req, reqLen, resp)
+			return C.cGoSdsMarkDependenciesMet(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
 		return err
@@ -463,7 +473,7 @@ func (rm *ReliabilityManager) StartPeriodicTasks() error {
 
 	_, err := rm.request("error StartPeriodicTasks", sdsEmptyRequest{},
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
-			return C.cGoSdsStartPeriodicTasks(rm.rmCtx, req, reqLen, resp)
+			return C.cGoSdsStartPeriodicTasks(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
 		return err
