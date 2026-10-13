@@ -26,7 +26,7 @@ jobs:
 
       # No compiler here: Nimble resolves the one `requires` names. Installing
       # one also puts its bundled Nimble on PATH (nim-lang/nimble#1840).
-      - uses: nim-lang/setup-nimble-action@b2eed48dc4ff7b6c1c5704fe9237ab6736c561cb # master: arch detection (#16)
+      - uses: nim-lang/setup-nimble-action@v2
         with:
           nimble-version: ${{ env.NIMBLE_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
