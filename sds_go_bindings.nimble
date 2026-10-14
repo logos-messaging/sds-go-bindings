@@ -30,6 +30,9 @@ requires "https://github.com/logos-messaging/nim-sds#4b08d508"
 
 ### Helpers
 
+# Windows `exec` prefers nim's bundled nimble.exe: https://github.com/status-im/status-go/issues/7941
+proc nimbleExe(): string = findExe("nimble").quoteShell
+
 proc nimblePkgDir(name: string): string =
   ## Where the dependency was installed. `nimble path` prints one line per
   ## installed version and exits 0 even when the package is missing.
@@ -40,7 +43,7 @@ proc nimblePkgDir(name: string): string =
         "SDS_PKG_DIR=" & result & " has no library/")
     return
 
-  let (output, exitCode) = gorgeEx("nimble path " & name)
+  let (output, exitCode) = gorgeEx(nimbleExe() & " path " & name)
   for line in output.strip().splitLines():
     let candidate = line.strip()
     if candidate.isAbsolute() and dirExists(candidate / "library"):
@@ -65,7 +68,7 @@ proc runNimSdsTask(taskName, lib: string) =
   ## LIBSDS_OUT; neither is decided here.
   let pkgDir = nimblePkgDir("sds")
   withDir pkgDir:
-    exec "nimble " & taskName
+    exec nimbleExe() & " " & taskName
 
   let outDir = getEnv("LIBSDS_OUT")
   if outDir.len > 0:
