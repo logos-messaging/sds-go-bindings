@@ -33,3 +33,4 @@ nimbledeps
 
 # Library built from the Nimble dependency
 build
+build-ios-mm

@@ -17,7 +17,7 @@ endif
 export CGO_CFLAGS  = -I$(LIB_DIR)
 export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
 
-.PHONY: deps libsds build test lint print-cgo clean
+.PHONY: deps libsds build test test-ios-mm lint print-cgo clean
 
 deps: nimble.paths ##@build Resolve the Nim dependencies
 
@@ -43,6 +43,12 @@ test: $(LIB) ##@test Run the Go tests; TEST=<name> to select one
 		$(GO) test ./... -count=1 -run $(TEST) -v; \
 	fi
 
+IOS_MM_NIM_PARAMS ?= --mm:orc -d:useMalloc
+
+test-ios-mm: ##@test Run the Go tests against libsds built with the iOS memory manager
+	NIM_PARAMS="$(IOS_MM_NIM_PARAMS)" MallocScribble=1 MALLOC_PERTURB_=85 GOFLAGS=-count=1 \
+		$(MAKE) test LIB_DIR=$(CURDIR)/build-ios-mm
+
 lint: $(LIB) ##@test Vet and build the lint stubs
 	$(GO) vet ./...
 	$(GO) build -tags lint ./...
@@ -52,4 +58,4 @@ print-cgo: ##@build Print the cgo flags, for a caller that runs Go itself
 	@echo 'CGO_LDFLAGS=$(CGO_LDFLAGS)'
 
 clean:
-	@rm -rf $(LIB_DIR) nimble.paths nimbledeps
+	@rm -rf $(LIB_DIR) $(CURDIR)/build-ios-mm nimble.paths nimbledeps

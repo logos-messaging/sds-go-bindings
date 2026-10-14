@@ -85,6 +85,10 @@ jobs:
         shell: bash
         run: go test -race ${{ runner.os == 'Windows' && '-skip TestStress_' || '' }} ./...
 
+      - name: Test with the iOS memory manager
+        if: runner.os != 'Windows'
+        run: make test-ios-mm
+
       - uses: golangci/golangci-lint-action@v8
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         with:
