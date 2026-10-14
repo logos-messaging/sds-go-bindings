@@ -9,7 +9,11 @@ export CGO_LDFLAGS="-L${NIM_SDS_LIB_PATH}/ -lsds -Wl,-rpath,${NIM_SDS_LIB_PATH}/
 HEADER_FILE := $(NIM_SDS_HEADER_PATH)/libsds.h
 LIB_FILES   := $(wildcard $(NIM_SDS_LIB_PATH)/libsds.*)
 
-.PHONY: all clean prepare build-libsds build
+.PHONY: all clean prepare build-libsds build test-ios-mm
+
+BINDINGS_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+NIM_SDS_SOURCE_DIR ?= $(abspath $(BINDINGS_ROOT)/../nim-sds)
+IOS_MM_NIMFLAGS ?= -d:noSignalHandler --mm:orc -d:useMalloc
 
 # Default target
 all: build
@@ -51,3 +55,11 @@ build: check-folders
 clean:
 	@echo "Cleaning up..."
 	@rm -f sds-go-bindings
+
+test-ios-mm:
+	$(MAKE) -C "$(NIM_SDS_SOURCE_DIR)" libsds USE_SYSTEM_NIM=1 NIMFLAGS="$(IOS_MM_NIMFLAGS)"
+	cd "$(BINDINGS_ROOT)" && \
+		MallocScribble=1 \
+		CGO_CFLAGS="-I$(NIM_SDS_SOURCE_DIR)/library/" \
+		CGO_LDFLAGS="-L$(NIM_SDS_SOURCE_DIR)/build/ -lsds -Wl,-rpath,$(NIM_SDS_SOURCE_DIR)/build/" \
+		go test ./sds -count=1 -timeout 120s -run 'TestWrapUnwrap|TestDependencies'

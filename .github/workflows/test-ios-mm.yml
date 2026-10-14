@@ -1,0 +1,35 @@
+name: test-ios-mm
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [release/v0.3]
+  workflow_dispatch:
+
+jobs:
+  test-ios-mm:
+    name: wrap/unwrap with the iOS memory manager
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: waku-org/nim-sds
+          ref: v0.3.4
+          path: nim-sds
+          submodules: recursive
+
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.2.10"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Test
+        run: make -C sds test-ios-mm NIM_SDS_SOURCE_DIR="${{ github.workspace }}/nim-sds"

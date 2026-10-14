@@ -6,6 +6,7 @@ package sds
 	#include <libsds.h>
 	#include <stdio.h>
 	#include <stdlib.h>
+	#include <string.h>
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, void* userData);
 
@@ -26,8 +27,26 @@ package sds
 
 	static void freeResp(void* resp) {
 		if (resp != NULL) {
-			free(resp);
+			SdsResp* r = (SdsResp*) resp;
+			if (r->msg != NULL) {
+				free(r->msg);
+			}
+			free(r);
 		}
+	}
+
+	// libsds frees the buffer it hands the callback as soon as the callback
+	// returns, so the Go side must copy it before the waiting goroutine reads
+	// it. cGoMemDup makes that copy onto the C heap (freed by freeResp).
+	static char* cGoMemDup(const void* src, size_t len) {
+		if (src == NULL || len == 0) {
+			return NULL;
+		}
+		char* dst = (char*) malloc(len);
+		if (dst != NULL) {
+			memcpy(dst, src, len);
+		}
+		return dst;
 	}
 
 	static char* getMyCharPtr(void* resp) {
@@ -156,8 +175,16 @@ func SdsGoCallback(ret C.int, msg *C.char, len C.size_t, resp unsafe.Pointer) {
 	if resp != nil {
 		m := (*C.SdsResp)(resp)
 		m.ret = ret
-		m.msg = msg
-		m.len = len
+		// libsds frees 'msg' as soon as this callback returns, so copy the bytes
+		// before unblocking the waiting goroutine that reads them.
+		if msg != nil && len > 0 {
+			m.msg = C.cGoMemDup(unsafe.Pointer(msg), len)
+			if m.msg != nil {
+				m.len = len
+			} else {
+				m.ret = C.RET_ERR
+			}
+		}
 		wg := (*sync.WaitGroup)(m.ffiWg)
 		wg.Done()
 	}
