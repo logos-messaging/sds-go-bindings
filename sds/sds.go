@@ -10,6 +10,7 @@ package sds
 	// The raw libsds exports. libsds.h is not included: its generated helpers
 	// need TinyCBOR, and these bindings encode CBOR in Go instead.
 	#define RET_OK         0
+	#define RET_ERR        1
 	#define RET_STALE_WARN 3
 
 	typedef void (*FFICallback)(int ret, const char* msg, size_t len, void* userData);
@@ -234,7 +235,11 @@ func SdsGoCallback(ret C.int, msg *C.char, length C.size_t, resp unsafe.Pointer)
 	// before unblocking the waiting goroutine that reads them.
 	if msg != nil && length > 0 {
 		m.msg = C.cGoMemDup(unsafe.Pointer(msg), length)
-		m.len = length
+		if m.msg != nil {
+			m.len = length
+		} else {
+			m.ret = C.RET_ERR
+		}
 	}
 	if ch, ok := respWaiters.Load(uintptr(resp)); ok {
 		close(ch.(chan struct{}))
