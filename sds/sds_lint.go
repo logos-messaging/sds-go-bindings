@@ -15,7 +15,15 @@ import (
 var ErrLintBuild = errors.New("sds: lint-only build stub: native libsds not linked")
 
 // NewReliabilityManager returns an error in lint builds.
-func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
+func NewReliabilityManager(logger *zap.Logger, persistence ...PersistenceCallbacks) (*ReliabilityManager, error) {
+	if len(persistence) > 1 {
+		return nil, errors.New("at most one SDS persistence callback set is allowed")
+	}
+	if len(persistence) == 1 {
+		if err := persistence[0].validate(); err != nil {
+			return nil, err
+		}
+	}
 	return nil, ErrLintBuild
 }
 

@@ -2,6 +2,7 @@ package sds
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 
 	"go.uber.org/zap"
@@ -20,9 +21,27 @@ type EventCallbacks struct {
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
 type ReliabilityManager struct {
-	logger    *zap.Logger
-	rmCtx     uintptr
-	callbacks EventCallbacks
+	logger      *zap.Logger
+	rmCtx       uintptr
+	callbacks   EventCallbacks
+	persistence PersistenceCallbacks
+}
+
+func (p PersistenceCallbacks) enabled() bool {
+	return p.SaveChannelMeta != nil ||
+		p.UpdateHistory != nil ||
+		p.LoadChannel != nil ||
+		p.DropChannel != nil
+}
+
+func (p PersistenceCallbacks) validate() error {
+	if !p.enabled() {
+		return nil
+	}
+	if p.SaveChannelMeta == nil || p.UpdateHistory == nil || p.LoadChannel == nil || p.DropChannel == nil {
+		return errors.New("all SDS persistence callbacks must be provided")
+	}
+	return nil
 }
 
 // The event callback sends back the rm ctx to know to which

@@ -15,6 +15,7 @@ package sds
 
 	typedef void (*FFICallback)(int ret, const char* msg, size_t len, void* userData);
 	typedef void (*SdsRetrievalHintProvider)(const char* messageId, char** hint, size_t* hintLen, void* userData);
+	typedef int (*SdsPersistenceCallback)(int operation, const char* channelId, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData);
 
 	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
 	int sds_wrap_outgoing_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
@@ -25,10 +26,12 @@ package sds
 	int sds_destroy(void* ctx);
 	uint64_t sds_add_event_listener(void* ctx, const char* eventName, FFICallback callback, void* userData);
 	int sds_set_retrieval_hint_provider(void* ctx, SdsRetrievalHintProvider callback, void* userData);
+	int sds_set_persistence_callback(void* ctx, SdsPersistenceCallback callback, void* userData);
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
 	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, uintptr_t ctx);
+	extern int sdsGlobalPersistenceCallback(int operation, char* channelId, uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, uintptr_t ctx);
 
 	typedef struct {
 		int ret;
@@ -116,6 +119,14 @@ package sds
 		return sds_set_retrieval_hint_provider((void*) ctx, (SdsRetrievalHintProvider) cGoSdsRetrievalHintTrampoline, (void*) ctx);
 	}
 
+	static int cGoSdsPersistenceTrampoline(int operation, const char* channelId, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData) {
+		return sdsGlobalPersistenceCallback(operation, (char*) channelId, (uint8_t*) payload, payloadLen, response, responseLen, (uintptr_t) userData);
+	}
+
+	static int cGoSdsSetPersistenceCallback(uintptr_t ctx) {
+		return sds_set_persistence_callback((void*) ctx, (SdsPersistenceCallback) cGoSdsPersistenceTrampoline, (void*) ctx);
+	}
+
 	static int cGoSdsWrapOutgoingMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
 		return sds_wrap_outgoing_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
@@ -182,7 +193,8 @@ func awaitResp(fire func(resp unsafe.Pointer)) unsafe.Pointer {
 // objects in nim-sds' library/libsds.nim; each request travels inside the
 // envelope named after the Nim proc's parameter.
 type sdsConfig struct {
-	ParticipantId string `cbor:"participantId"`
+	ParticipantId      string `cbor:"participantId"`
+	PersistenceEnabled bool   `cbor:"persistenceEnabled"`
 }
 
 type sdsCreateRequest struct {
@@ -277,19 +289,35 @@ func (rm *ReliabilityManager) request(
 	return respBytes(resp), nil
 }
 
-func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
+func NewReliabilityManager(logger *zap.Logger, persistence ...PersistenceCallbacks) (*ReliabilityManager, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	if len(persistence) > 1 {
+		return nil, fmt.Errorf("at most one SDS persistence callback set is allowed")
+	}
+
+	var persistenceCallbacks PersistenceCallbacks
+	if len(persistence) == 1 {
+		persistenceCallbacks = persistence[0]
+	}
+	if err := persistenceCallbacks.validate(); err != nil {
+		return nil, err
+	}
 
 	rm := &ReliabilityManager{
-		logger: logger,
+		logger:      logger,
+		persistence: persistenceCallbacks,
 	}
 
 	rm.logger.Info("creating new reliability manager")
 
-	// An empty participantId disables SDS-R, matching the previous behaviour.
-	reqCbor, err := cbor.Marshal(sdsCreateRequest{Config: sdsConfig{ParticipantId: ""}})
+	// An empty participantId keeps SDS-R disabled. Persistence restores
+	// duplicate detection without enabling repair.
+	reqCbor, err := cbor.Marshal(sdsCreateRequest{Config: sdsConfig{
+		ParticipantId:      "",
+		PersistenceEnabled: persistenceCallbacks.enabled(),
+	}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode config: %w", err)
 	}
@@ -314,6 +342,13 @@ func NewReliabilityManager(logger *zap.Logger) (*ReliabilityManager, error) {
 		C.free(unsafe.Pointer(cName))
 	}
 	C.cGoSdsSetRetrievalHintProvider(C.uintptr_t(rm.rmCtx))
+	if persistenceCallbacks.enabled() {
+		if ret := C.cGoSdsSetPersistenceCallback(C.uintptr_t(rm.rmCtx)); ret != C.RET_OK {
+			_ = C.cGoSdsDestroy(C.uintptr_t(rm.rmCtx))
+			unregisterReliabilityManager(rm)
+			return nil, fmt.Errorf("failed to register SDS persistence callback: code %d", int(ret))
+		}
+	}
 
 	rm.logger.Debug("successfully created reliability manager")
 	return rm, nil
