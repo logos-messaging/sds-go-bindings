@@ -43,6 +43,19 @@ func TestWrapUnwrap(t *testing.T) {
 	require.Equal(t, len(*unwrappedMessage.MissingDeps), 0, "Expexted to be no missing dependencies")
 }
 
+// Test that a received message above nim-ffi's former 8 MiB request cap
+// reaches nim-sds (nim-sds#106). The bytes are not a valid SDS message, so the
+// call must fail while decoding, not at the FFI request cap.
+func TestUnwrapLargePayloadReachesDecoder(t *testing.T) {
+	rm, err := NewReliabilityManager(nil)
+	require.NoError(t, err)
+	defer rm.Cleanup()
+
+	_, err = rm.UnwrapReceivedMessage(make([]byte, 9*1024*1024))
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "byte cap")
+}
+
 // Test dependency handling
 func TestDependencies(t *testing.T) {
 	rm, err := NewReliabilityManager(nil)
