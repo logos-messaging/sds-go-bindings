@@ -43,6 +43,25 @@ func TestWrapUnwrap(t *testing.T) {
 	require.Equal(t, len(*unwrappedMessage.MissingDeps), 0, "Expexted to be no missing dependencies")
 }
 
+// Test a payload above nim-ffi's former 8 MiB request cap (nim-sds#106)
+func TestWrapUnwrapLargePayload(t *testing.T) {
+	rm, err := NewReliabilityManager(nil)
+	require.NoError(t, err)
+	defer rm.Cleanup()
+
+	originalPayload := make([]byte, 9*1024*1024)
+	for i := range originalPayload {
+		originalPayload[i] = byte(i)
+	}
+
+	wrappedMsg, err := rm.WrapOutgoingMessage(originalPayload, MessageID("msg-large-1"), "test-large-payload")
+	require.NoError(t, err)
+
+	unwrappedMessage, err := rm.UnwrapReceivedMessage(wrappedMsg)
+	require.NoError(t, err)
+	require.Equal(t, originalPayload, *unwrappedMessage.Message)
+}
+
 // Test dependency handling
 func TestDependencies(t *testing.T) {
 	rm, err := NewReliabilityManager(nil)
