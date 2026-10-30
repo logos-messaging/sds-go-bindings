@@ -17,18 +17,24 @@ endif
 export CGO_CFLAGS  = -I$(LIB_DIR)
 export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
 
+NIM_PARAMS ?= --mm:refc --opt:size -d:chronicles_line_numbers -d:chronicles_log_level=TRACE
+
 .PHONY: deps libsds build test test-ios-mm lint print-cgo clean
 
 deps: nimble.paths ##@build Resolve the Nim dependencies
 
 nimble.paths: nimble.lock sds_go_bindings.nimble
+	# nimble path lists every installed version, so keep only this resolution's.
+	rm -rf nimbledeps
 	$(NIMBLE) setup --localdeps -y
 
-# nim-sds installs outside this tree, so the compile needs nimble.paths.
+# Plain nim, so nim-sds builds from this resolution and not from its own lock.
+# nimble shell puts the Nim this resolution selected on PATH.
 $(LIB): | nimble.paths
-	LIBSDS_OUT="$(LIB_DIR)" \
-		NIM_PARAMS="$$NIM_PARAMS $$(tr '\n' ' ' < $(CURDIR)/nimble.paths)" \
-		$(NIMBLE) libsds
+	@mkdir -p $(LIB_DIR)
+	LIB_OUT_DIR="$(LIB_DIR)" \
+		NIM_PARAMS="--skipParentCfg $(NIM_PARAMS) $$(tr '\n' ' ' < $(CURDIR)/nimble.paths)" \
+		$(NIMBLE) shell nim --skipParentCfg libsds "$$($(NIMBLE) path sds)/libsds.nims"
 	@test -f $@ || (echo "ERROR: $@ was not produced" && exit 1)
 
 libsds: $(LIB) ##@build Build libsds from the Nimble dependency
