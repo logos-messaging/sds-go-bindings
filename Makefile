@@ -24,6 +24,8 @@ NIM_PARAMS ?= --mm:refc --opt:size -d:chronicles_line_numbers -d:chronicles_log_
 deps: nimble.paths ##@build Resolve the Nim dependencies
 
 nimble.paths: nimble.lock sds_go_bindings.nimble
+	# nimble path lists every installed version, so keep only this resolution's.
+	rm -rf nimbledeps
 	$(NIMBLE) setup --localdeps -y
 
 # Plain nim, so nim-sds builds from this resolution and not from its own lock.
