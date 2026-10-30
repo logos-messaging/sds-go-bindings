@@ -30,7 +30,7 @@ nimble.paths: nimble.lock sds_go_bindings.nimble
 # nimble shell puts the Nim this resolution selected on PATH.
 $(LIB): | nimble.paths
 	@mkdir -p $(LIB_DIR)
-	printf 'include "%s/sds.nimble"\n' "$$(sed -n 's#\\\\#/#g; s#^--path:"\(.*/sds-[^/]*\)/sds"$$#\1#p' nimble.paths)" > $(LIB_DIR)/sds.nims
+	printf 'include "%s/sds.nimble"\n' "$$(sed -n 's#[\\/][\\/]*#/#g; s#^--path:"\(.*/sds-[^/]*\)/sds"$$#\1#p' nimble.paths)" > $(LIB_DIR)/sds.nims
 	LIB_OUT_DIR="$(LIB_DIR)" \
 		NIM_PARAMS="--skipParentCfg $(NIM_PARAMS) $$(tr '\n' ' ' < $(CURDIR)/nimble.paths)" \
 		$(NIMBLE) shell nim --skipParentCfg libsds $(LIB_DIR)/sds.nims
