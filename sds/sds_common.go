@@ -2,12 +2,17 @@ package sds
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 
 	"go.uber.org/zap"
 )
 
 const EventChanBufferSize = 1024
+
+// ErrNotSDS means the input could not be decoded as an SDS message.
+// Callers supporting legacy unwrapped payloads may pass through only this error.
+var ErrNotSDS = errors.New("payload is not a valid SDS message")
 
 type EventCallbacks struct {
 	OnMessageReady        func(messageId MessageID, channelId string)

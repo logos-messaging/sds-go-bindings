@@ -3,11 +3,60 @@
 package sds
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+type loadFailurePersistence struct {
+	recordingPersistence
+	loadError error
+	data      ChannelData
+}
+
+func (p *loadFailurePersistence) LoadChannel(string) (ChannelData, error) {
+	return p.data, p.loadError
+}
+
+func TestUnwrapErrorClassification(t *testing.T) {
+	sender, err := NewReliabilityManager(nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
+	wrapped, err := sender.WrapOutgoingMessage([]byte("payload"), "message", "channel")
+	require.NoError(t, err)
+
+	for _, failure := range []string{"load", "metadata", "history"} {
+		t.Run(failure, func(t *testing.T) {
+			persistence := &loadFailurePersistence{}
+			switch failure {
+			case "load":
+				persistence.loadError = errors.New("injected load failure")
+			case "metadata":
+				persistence.data.Meta = []byte{0xff}
+			case "history":
+				persistence.data.MessageHistory = [][]byte{{0xff}}
+			}
+			receiver, err := NewReliabilityManager(nil, persistence)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
+
+			_, err = receiver.UnwrapReceivedMessage([]byte("legacy payload"))
+			require.ErrorIs(t, err, ErrNotSDS)
+			_, err = receiver.UnwrapReceivedMessage(wrapped)
+			require.Error(t, err)
+			require.NotErrorIs(t, err, ErrNotSDS)
+			require.ErrorContains(t, err, "rePersistenceError")
+
+			persistence.loadError = nil
+			persistence.data = ChannelData{}
+			message, err := receiver.UnwrapReceivedMessage(wrapped)
+			require.NoError(t, err)
+			require.Equal(t, []byte("payload"), *message.Message)
+		})
+	}
+}
 
 type persistenceCall struct {
 	operation string

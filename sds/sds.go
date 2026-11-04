@@ -266,6 +266,15 @@ func respBytes(resp unsafe.Pointer) []byte {
 	return C.GoBytes(unsafe.Pointer(C.getMyCharPtr(resp)), C.int(C.getMyCharLen(resp)))
 }
 
+type nativeRequestError struct {
+	prefix  string
+	message string
+}
+
+func (e *nativeRequestError) Error() string {
+	return e.prefix + ": " + e.message
+}
+
 // request CBOR-encodes req, dispatches one FFI call and blocks until the result
 // callback fires. It returns the CBOR-encoded reply.
 func (rm *ReliabilityManager) request(
@@ -284,7 +293,7 @@ func (rm *ReliabilityManager) request(
 	defer C.freeResp(resp)
 
 	if C.getRet(resp) != C.RET_OK {
-		return nil, fmt.Errorf("%s: %s", errPrefix, respString(resp))
+		return nil, &nativeRequestError{prefix: errPrefix, message: respString(resp)}
 	}
 	return respBytes(resp), nil
 }
@@ -449,6 +458,10 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 			return C.cGoSdsUnwrapReceivedMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
+		if nativeErr, ok := err.(*nativeRequestError); ok &&
+			nativeErr.message == "error processing unwrap request: reDeserializationError" {
+			return nil, fmt.Errorf("%w: %w", ErrNotSDS, err)
+		}
 		return nil, err
 	}
 

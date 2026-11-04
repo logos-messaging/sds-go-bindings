@@ -23,6 +23,11 @@ The Nimble dependency is pinned to a nim-sds commit that includes the
 Persistence restores duplicate detection across manager restarts. SDS-R repair
 remains disabled because these bindings leave the participant ID empty.
 
+`UnwrapReceivedMessage` returns an error matching `sds.ErrNotSDS` when native
+SDS cannot deserialize the input. Callers supporting legacy unwrapped messages
+may pass through that input. Other errors, including persisted-state loading
+and response-decoding failures, must not be treated as unwrapped payloads.
+
 ## Installation
 
 To build the required dependencies for this module, the `make` command needs to be executed. If you are integrating this module into another project via `go get`, ensure that you navigate to the `sds-go-bindings/sds` directory and run `make`.
