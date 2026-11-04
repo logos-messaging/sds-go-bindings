@@ -15,7 +15,7 @@ package sds
 
 	typedef void (*FFICallback)(int ret, const char* msg, size_t len, void* userData);
 	typedef void (*SdsRetrievalHintProvider)(const char* messageId, char** hint, size_t* hintLen, void* userData);
-	typedef int (*SdsPersistenceCallback)(int operation, const char* channelId, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData);
+	typedef int (*SdsPersistenceCallback)(int operation, const uint8_t* channelId, size_t channelIdLen, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData);
 
 	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
 	int sds_wrap_outgoing_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
@@ -31,7 +31,7 @@ package sds
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
 	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, uintptr_t ctx);
-	extern int sdsGlobalPersistenceCallback(int operation, char* channelId, uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, uintptr_t ctx);
+	extern int sdsGlobalPersistenceCallback(int operation, uint8_t* channelId, size_t channelIdLen, uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, uintptr_t ctx);
 
 	typedef struct {
 		int ret;
@@ -119,8 +119,8 @@ package sds
 		return sds_set_retrieval_hint_provider((void*) ctx, (SdsRetrievalHintProvider) cGoSdsRetrievalHintTrampoline, (void*) ctx);
 	}
 
-	static int cGoSdsPersistenceTrampoline(int operation, const char* channelId, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData) {
-		return sdsGlobalPersistenceCallback(operation, (char*) channelId, (uint8_t*) payload, payloadLen, response, responseLen, (uintptr_t) userData);
+	static int cGoSdsPersistenceTrampoline(int operation, const uint8_t* channelId, size_t channelIdLen, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData) {
+		return sdsGlobalPersistenceCallback(operation, (uint8_t*) channelId, channelIdLen, (uint8_t*) payload, payloadLen, response, responseLen, (uintptr_t) userData);
 	}
 
 	static int cGoSdsSetPersistenceCallback(uintptr_t ctx) {
@@ -266,6 +266,15 @@ func respBytes(resp unsafe.Pointer) []byte {
 	return C.GoBytes(unsafe.Pointer(C.getMyCharPtr(resp)), C.int(C.getMyCharLen(resp)))
 }
 
+type nativeRequestError struct {
+	prefix  string
+	message string
+}
+
+func (e *nativeRequestError) Error() string {
+	return e.prefix + ": " + e.message
+}
+
 // request CBOR-encodes req, dispatches one FFI call and blocks until the result
 // callback fires. It returns the CBOR-encoded reply.
 func (rm *ReliabilityManager) request(
@@ -284,7 +293,7 @@ func (rm *ReliabilityManager) request(
 	defer C.freeResp(resp)
 
 	if C.getRet(resp) != C.RET_OK {
-		return nil, fmt.Errorf("%s: %s", errPrefix, respString(resp))
+		return nil, &nativeRequestError{prefix: errPrefix, message: respString(resp)}
 	}
 	return respBytes(resp), nil
 }
@@ -449,6 +458,10 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 			return C.cGoSdsUnwrapReceivedMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
+		if nativeErr, ok := err.(*nativeRequestError); ok &&
+			nativeErr.message == "error processing unwrap request: reDeserializationError" {
+			return nil, fmt.Errorf("%w: %w", ErrNotSDS, err)
+		}
 		return nil, err
 	}
 

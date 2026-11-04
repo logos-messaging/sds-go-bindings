@@ -34,7 +34,8 @@ func setPersistenceResponse(response **C.char, responseLen *C.size_t, data []byt
 //export sdsGlobalPersistenceCallback
 func sdsGlobalPersistenceCallback(
 	operation C.int,
-	channelID *C.char,
+	channelID *C.uint8_t,
+	channelIDLen C.size_t,
 	payload *C.uint8_t,
 	payloadLen C.size_t,
 	response **C.char,
@@ -51,7 +52,7 @@ func sdsGlobalPersistenceCallback(
 		return C.RET_ERR
 	}
 
-	channel := C.GoString(channelID)
+	channel := C.GoStringN((*C.char)(unsafe.Pointer(channelID)), C.int(channelIDLen))
 	var payloadBytes []byte
 	if payloadLen > 0 {
 		payloadBytes = C.GoBytes(unsafe.Pointer(payload), C.int(payloadLen))
