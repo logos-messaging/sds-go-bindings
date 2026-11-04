@@ -20,9 +20,10 @@ type EventCallbacks struct {
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
 type ReliabilityManager struct {
-	logger    *zap.Logger
-	rmCtx     uintptr
-	callbacks EventCallbacks
+	logger      *zap.Logger
+	rmCtx       uintptr
+	callbacks   EventCallbacks
+	persistence PersistenceCallbacks
 }
 
 // The event callback sends back the rm ctx to know to which

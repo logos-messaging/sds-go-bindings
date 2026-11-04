@@ -2,6 +2,27 @@
 
 This repository provides Go bindings for the SDS library, enabling seamless integration with Go projects.
 
+## Persistence
+
+Pass an implementation of the `sds.PersistenceCallbacks` interface to
+`sds.NewReliabilityManager` to persist channel state. Implement all four
+methods (`SaveChannelMeta`, `UpdateHistory`, `LoadChannel`, and `DropChannel`),
+or pass `nil` as the second argument for in-memory operation:
+`sds.NewReliabilityManager(logger, nil)`. The persistence argument is now required;
+existing calls with only a logger must add `nil`.
+
+Metadata and serialized history messages are opaque byte slices. History
+updates contain messages to append and IDs to evict; apply each update
+transactionally. Loading a new channel must return an empty `sds.ChannelData`
+without an error. Return storage errors from the methods rather than silently
+discarding them.
+
+The Nimble dependency is pinned to a nim-sds commit that includes the
+`sds_set_persistence_callback` persistence FFI.
+
+Persistence restores duplicate detection across manager restarts. SDS-R repair
+remains disabled because these bindings leave the participant ID empty.
+
 ## Installation
 
 To build the required dependencies for this module, the `make` command needs to be executed. If you are integrating this module into another project via `go get`, ensure that you navigate to the `sds-go-bindings/sds` directory and run `make`.

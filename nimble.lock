@@ -24,8 +24,8 @@
       }
     },
     "bearssl": {
-      "version": "0.2.14",
-      "vcsRevision": "2aee5932fa1138969056b5bf6fad2f34941f249e",
+      "version": "0.2.13",
+      "vcsRevision": "b6c9a38964a574f6bc51f69efaf8fb2fedea905e",
       "url": "https://github.com/status-im/nim-bearssl",
       "downloadMethod": "git",
       "dependencies": [
@@ -33,7 +33,7 @@
         "unittest2"
       ],
       "checksums": {
-        "sha1": "f290ba0d2d0d59555bcb57c19d1d503750f82634"
+        "sha1": "e3a004381e8c2ec0d37bebc2e48b42c34353e9cf"
       }
     },
     "intops": {
@@ -134,8 +134,8 @@
       }
     },
     "metrics": {
-      "version": "0.2.3",
-      "vcsRevision": "b56bfb8656bd135f0be17d4da95680e86f71e8b4",
+      "version": "#9f2e1d4a4164deb37603b16cedd1707408ee5955",
+      "vcsRevision": "9f2e1d4a4164deb37603b16cedd1707408ee5955",
       "url": "https://github.com/status-im/nim-metrics",
       "downloadMethod": "git",
       "dependencies": [
@@ -145,7 +145,7 @@
         "stew"
       ],
       "checksums": {
-        "sha1": "f6dc5f12e37410e58a0649515520aee0a73ab0b2"
+        "sha1": "d64e789ba2a3b848eb7c628d728623126182c3f1"
       }
     },
     "faststreams": {
@@ -272,8 +272,8 @@
       }
     },
     "sds": {
-      "version": "#fc932e57",
-      "vcsRevision": "fc932e5785cdd6913b7e792adbad8ad6bf24289a",
+      "version": "#e2c8f8df06145a8eae6ffe8422d084d7df561002",
+      "vcsRevision": "e2c8f8df06145a8eae6ffe8422d084d7df561002",
       "url": "https://github.com/logos-messaging/nim-sds",
       "downloadMethod": "git",
       "dependencies": [
@@ -288,7 +288,7 @@
         "ffi"
       ],
       "checksums": {
-        "sha1": "e3baf20b6eb7e02d744b86e16242c125ac1c82f7"
+        "sha1": "c18415caef00e515dad81125039f96598a6138b5"
       }
     }
   },

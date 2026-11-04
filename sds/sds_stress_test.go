@@ -40,7 +40,7 @@ func TestStress_ConcurrentManagersWithEvents(t *testing.T) {
 
 	// Shared sender produces a chain of dependent messages so receivers emit
 	// OnMissingDependencies / OnMessageReady events on unwrap.
-	sender, err := NewReliabilityManager(zap.NewNop())
+	sender, err := NewReliabilityManager(zap.NewNop(), nil)
 	require.NoError(t, err)
 	defer sender.Cleanup()
 
@@ -88,7 +88,7 @@ func TestStress_ConcurrentManagersWithEvents(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
-				rm, cerr := NewReliabilityManager(zap.NewNop())
+				rm, cerr := NewReliabilityManager(zap.NewNop(), nil)
 				if cerr != nil {
 					t.Errorf("create failed: %v", cerr)
 					return
@@ -154,13 +154,13 @@ func TestStress_LongLivedManagersHammerUnwrap(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			sender, err := NewReliabilityManager(zap.NewNop())
+			sender, err := NewReliabilityManager(zap.NewNop(), nil)
 			if err != nil {
 				t.Errorf("create sender failed: %v", err)
 				return
 			}
 			defer sender.Cleanup()
-			receiver, err := NewReliabilityManager(zap.NewNop())
+			receiver, err := NewReliabilityManager(zap.NewNop(), nil)
 			if err != nil {
 				t.Errorf("create receiver failed: %v", err)
 				return
