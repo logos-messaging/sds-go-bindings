@@ -30,42 +30,22 @@ and response-decoding failures, must not be treated as unwrapped payloads.
 
 ## Installation
 
-To build the required dependencies for this module, the `make` command needs to be executed. If you are integrating this module into another project via `go get`, ensure that you navigate to the `sds-go-bindings/sds` directory and run `make`.
-
-### Steps to Install
-
-Follow these steps to install and set up the module:
-
-1. Retrieve the module using `go get`:
-   ```
-   go get -u github.com/waku-org/sds-go-bindings
-   ```
-2. Navigate to the module's directory:
-   ```
-   cd $(go list -m -f '{{.Dir}}' github.com/waku-org/sds-go-bindings)
-   ```
-3. Prepare third_party directory which will clone `nim-sds`
-   ```
-   sudo mkdir third_party
-   sudo chown $USER third_party
-   ```
-4. Build the dependencies:
-   ```
-   make -C sds
-   ```
-
-Now the module is ready for use in your project.
-
-### Note
-
-In order to easily build the libsds library on demand, it is recommended to add the following target in your project's Makefile:
+These bindings link against libsds, the C library of
+[nim-sds](https://github.com/logos-messaging/nim-sds). An application that
+already builds libsds points cgo at it:
 
 ```
-LIBSDS_DEP_PATH=$(shell go list -m -f '{{.Dir}}' github.com/waku-org/sds-go-bindings)
-
-buildlib:
-   cd $(LIBSDS_DEP_PATH) &&\
-   sudo mkdir -p third_party &&\
-   sudo chown $(USER) third_party &&\
-   make -C sds
+CGO_CFLAGS="-I<dir with libsds.h>" CGO_LDFLAGS="-L<dir with libsds> -lsds" go build ./...
 ```
+
+`libsds.h` includes `generated/sds.h`, which nim-sds writes next to it.
+
+To build libsds here, from the nim-sds revision `nimble.lock` pins, with
+[Nimble](https://github.com/nim-lang/nimble) 0.26 or newer on `PATH`:
+
+```
+make test          # builds libsds into build/, then runs the Go tests
+make print-cgo     # the cgo flags for that build, to run Go yourself
+```
+
+libsds builds with ORC; pass `NIM_PARAMS` to build it with other Nim flags.
