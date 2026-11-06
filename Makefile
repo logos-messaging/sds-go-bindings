@@ -17,7 +17,7 @@ endif
 export CGO_CFLAGS  = -I$(LIB_DIR)
 export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
 
-NIM_PARAMS ?= --mm:refc --opt:size -d:chronicles_line_numbers -d:chronicles_log_level=TRACE
+NIM_PARAMS ?= --mm:orc -d:useMalloc --opt:size -d:chronicles_line_numbers -d:chronicles_log_level=TRACE
 
 .PHONY: deps libsds build test test-ios-mm lint print-cgo clean
 
