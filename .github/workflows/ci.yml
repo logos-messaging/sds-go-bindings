@@ -15,12 +15,15 @@ env:
 
 jobs:
   build-test-lint:
-    name: 'go / ${{ matrix.os }}'
+    name: 'go / ${{ matrix.os }} / ${{ matrix.mm }}'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        mm: [orc, refc]
+        include:
+          - { mm: refc, make-args: 'NIM_PARAMS="--mm:refc --opt:size -d:chronicles_line_numbers -d:chronicles_log_level=TRACE"' }
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +58,7 @@ jobs:
 
       - name: Build libsds
         shell: bash
-        run: make libsds
+        run: make libsds ${{ matrix.make-args }}
 
       - name: Export cgo flags
         shell: bash
@@ -86,10 +89,10 @@ jobs:
         run: go test -race ${{ runner.os == 'Windows' && '-skip TestStress_' || '' }} ./...
 
       - name: Test with the iOS memory manager
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.mm == 'orc'
         run: make test-ios-mm
 
       - uses: golangci/golangci-lint-action@v8
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && runner.os == 'Linux' && matrix.mm == 'orc' }}
         with:
           version: v2.4.0
