@@ -17,18 +17,27 @@ endif
 export CGO_CFLAGS  = -I$(LIB_DIR)
 export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
 
+NIM_PARAMS ?= --mm:orc -d:useMalloc --opt:size -d:chronicles_line_numbers -d:chronicles_log_level=TRACE
+
 .PHONY: deps libsds build test test-ios-mm lint print-cgo clean
 
 deps: nimble.paths ##@build Resolve the Nim dependencies
 
 nimble.paths: nimble.lock sds_go_bindings.nimble
+	# nimble path lists every installed version, so keep only this resolution's.
+	rm -rf nimbledeps
 	$(NIMBLE) setup --localdeps -y
 
-# nim-sds installs outside this tree, so the compile needs nimble.paths.
+# Plain nim, so nim-sds builds from this resolution and not from its own lock.
+# nimble shell puts the Nim this resolution selected on PATH.
+# libsds.h includes generated/sds.h; both go next to the library.
 $(LIB): | nimble.paths
-	LIBSDS_OUT="$(LIB_DIR)" \
-		NIM_PARAMS="$$NIM_PARAMS $$(tr '\n' ' ' < $(CURDIR)/nimble.paths)" \
-		$(NIMBLE) libsds
+	@mkdir -p $(LIB_DIR)
+	sds="$$($(NIMBLE) path sds)" && \
+		eval "$(NIMBLE) shell nim c --skipParentCfg $(NIM_PARAMS) $$(tr '\r\n' '  ' < $(CURDIR)/nimble.paths) \
+			-d:ffiOutputDir=\"$(LIB_DIR)/generated\" --nimcache:\"$(LIB_DIR)/nimcache\" \
+			--app:lib --out:\"$@\" \"$$sds/library/libsds.nim\"" && \
+		cp "$$sds/library/libsds.h" "$(LIB_DIR)/"
 	@test -f $@ || (echo "ERROR: $@ was not produced" && exit 1)
 
 libsds: $(LIB) ##@build Build libsds from the Nimble dependency
