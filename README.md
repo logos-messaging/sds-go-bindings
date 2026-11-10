@@ -2,6 +2,17 @@
 
 This repository provides Go bindings for the SDS library, enabling seamless integration with Go projects.
 
+## Outgoing message callbacks
+
+`EventCallbacks.OnMessageSent` reports acknowledgment evidence from incoming
+causal history or bloom filters. `OnMessageExpired` reports an unacknowledged
+message removed after the native sweep budget is exhausted. Both callbacks
+receive the message ID and channel ID; expiry must not be interpreted as delivery.
+Leaving `OnMessageExpired` unset does not route expiry to `OnMessageSent`.
+
+Native sweep timing and counters are unchanged. The sweep counts elapsed resend
+intervals, not actual transmissions, and does not transmit retries.
+
 ## Persistence
 
 Pass an implementation of the `sds.PersistenceCallbacks` interface to

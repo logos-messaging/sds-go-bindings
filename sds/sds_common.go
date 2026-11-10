@@ -17,6 +17,7 @@ var ErrNotSDS = errors.New("payload is not a valid SDS message")
 type EventCallbacks struct {
 	OnMessageReady        func(messageId MessageID, channelId string)
 	OnMessageSent         func(messageId MessageID, channelId string)
+	OnMessageExpired      func(messageId MessageID, channelId string)
 	OnMissingDependencies func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
 	OnPeriodicSync        func()
 	OnRepairReady         func(message []byte, channelId string)
@@ -110,6 +111,8 @@ func (rm *ReliabilityManager) OnEvent(eventStr string) {
 		rm.parseMessageReadyEvent(eventStr)
 	case "message_sent":
 		rm.parseMessageSentEvent(eventStr)
+	case "message_expired":
+		rm.parseMessageExpiredEvent(eventStr)
 	case "missing_dependencies":
 		rm.parseMissingDepsEvent(eventStr)
 	case "periodic_sync":
@@ -149,6 +152,18 @@ func (rm *ReliabilityManager) parseMessageSentEvent(eventStr string) {
 
 	if rm.callbacks.OnMessageSent != nil {
 		rm.callbacks.OnMessageSent(msgEvent.MessageId, msgEvent.ChannelId)
+	}
+}
+
+func (rm *ReliabilityManager) parseMessageExpiredEvent(eventStr string) {
+	var event msgEvent
+	if err := json.Unmarshal([]byte(eventStr), &event); err != nil {
+		rm.logger.Error("failed to parse message expired event", zap.Error(err))
+		return
+	}
+
+	if rm.callbacks.OnMessageExpired != nil {
+		rm.callbacks.OnMessageExpired(event.MessageId, event.ChannelId)
 	}
 }
 

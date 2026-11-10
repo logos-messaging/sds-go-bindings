@@ -230,6 +230,7 @@ type sdsEmptyRequest struct{}
 var eventNames = []string{
 	"message_ready",
 	"message_sent",
+	"message_expired",
 	"missing_dependencies",
 	"periodic_sync",
 	"repair_ready",
