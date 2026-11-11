@@ -68,3 +68,9 @@ make print-cgo     # the cgo flags for that build, to run Go yourself
 ```
 
 libsds builds with ORC; pass `NIM_PARAMS` to build it with other Nim flags.
+Consumers can use the Nimble tasks `libsds`, `libsdsAndroid`, and `libsdsIOS`
+with `NIM_PARAMS` set to their resolved dependency paths and `LIBSDS_OUT` set
+to the destination directory. `SDS_PKG_DIR` can explicitly select the resolved
+nim-sds package. Android requires `ANDROID_NDK_ROOT` and accepts `ARCH` and
+`ANDROID_API`; iOS accepts `ARCH`, `IPHONE_SDK`, and `IOS_TARGET`.
+The iOS task isolates the Nim runtime symbols in the static archive.
