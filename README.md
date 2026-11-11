@@ -13,6 +13,14 @@ Leaving `OnMessageExpired` unset does not route expiry to `OnMessageSent`.
 Native sweep timing and counters are unchanged. The sweep counts elapsed resend
 intervals, not actual transmissions, and does not transmit retries.
 
+## Periodic sync messages
+
+`WrapSyncMessage(channelID)` creates a metadata-only sync for a channel.
+It does not add a content message to SDS history or wait for acknowledgement.
+`UnwrapReceivedMessage` processes its metadata and sets `IsSync` to true;
+callers should not treat the empty sync payload as application content.
+`OnPeriodicSync` is a notification to initiate sync, not a message to send.
+
 ## Persistence
 
 Pass an implementation of the `sds.PersistenceCallbacks` interface to

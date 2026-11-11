@@ -11,6 +11,7 @@ type UnwrappedMessage struct {
 	Message     *[]byte         `json:"message"`
 	MissingDeps *[]HistoryEntry `json:"missingDeps"`
 	ChannelId   *string         `json:"channelId"`
+	IsSync      bool            `json:"isSync"`
 }
 
 type HistoryUpdate struct {

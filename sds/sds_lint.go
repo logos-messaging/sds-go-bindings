@@ -30,6 +30,11 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	return nil, ErrLintBuild
 }
 
+// WrapSyncMessage returns an error in lint builds.
+func (rm *ReliabilityManager) WrapSyncMessage(channelId string) ([]byte, error) {
+	return nil, ErrLintBuild
+}
+
 // UnwrapReceivedMessage returns an error in lint builds.
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {
 	return nil, ErrLintBuild

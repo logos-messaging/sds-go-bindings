@@ -19,6 +19,7 @@ package sds
 
 	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
 	int sds_wrap_outgoing_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_wrap_sync_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
 	int sds_unwrap_received_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
 	int sds_mark_dependencies_met(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
 	int sds_reset(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
@@ -131,6 +132,10 @@ package sds
 		return sds_wrap_outgoing_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
+	static int cGoSdsWrapSyncMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_wrap_sync_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	}
+
 	static int cGoSdsUnwrapReceivedMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
 		return sds_unwrap_received_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
@@ -204,6 +209,10 @@ type sdsCreateRequest struct {
 type sdsWrapRequest struct {
 	Message   []byte `cbor:"message"`
 	MessageId string `cbor:"messageId"`
+	ChannelId string `cbor:"channelId"`
+}
+
+type sdsSyncRequest struct {
 	ChannelId string `cbor:"channelId"`
 }
 
@@ -446,6 +455,28 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	}
 
 	logger.Debug("successfully wrapped message")
+	return wrapResp.Message, nil
+}
+
+// WrapSyncMessage builds a metadata-only sync message for a channel.
+func (rm *ReliabilityManager) WrapSyncMessage(channelId string) ([]byte, error) {
+	if rm == nil {
+		return nil, errEmptyReliabilityManager
+	}
+
+	req := sdsRequest[sdsSyncRequest]{Req: sdsSyncRequest{ChannelId: channelId}}
+	reply, err := rm.request("error WrapSyncMessage", req,
+		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
+			return C.cGoSdsWrapSyncMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapResp sdsWrapResponse
+	if err := cbor.Unmarshal(reply, &wrapResp); err != nil {
+		return nil, fmt.Errorf("failed to decode sync wrap response: %w", err)
+	}
 	return wrapResp.Message, nil
 }
 
