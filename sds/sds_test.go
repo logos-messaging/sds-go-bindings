@@ -41,6 +41,105 @@ func TestWrapUnwrap(t *testing.T) {
 
 	require.Equal(t, string(*unwrappedMessage.Message), string(originalPayload), "Expected unwrapped and original payloads to be equal")
 	require.Equal(t, len(*unwrappedMessage.MissingDeps), 0, "Expexted to be no missing dependencies")
+	require.False(t, unwrappedMessage.IsSync)
+}
+
+func TestSyncMessage(t *testing.T) {
+	sender, err := NewReliabilityManager(nil, nil)
+	require.NoError(t, err)
+	defer sender.Cleanup()
+	receiver, err := NewReliabilityManager(nil, nil)
+	require.NoError(t, err)
+	defer receiver.Cleanup()
+	observer, err := NewReliabilityManager(nil, nil)
+	require.NoError(t, err)
+	defer observer.Cleanup()
+
+	const channelID = "sync-channel"
+	sent := make(chan MessageID, 2)
+	sender.RegisterCallbacks(EventCallbacks{
+		OnMessageSent: func(id MessageID, channel string) {
+			if channel == channelID {
+				select {
+				case sent <- id:
+				default:
+				}
+			}
+		},
+	})
+
+	for _, id := range []MessageID{"first", "second"} {
+		content, err := sender.WrapOutgoingMessage([]byte(id), id, channelID)
+		require.NoError(t, err)
+		unwrapped, err := receiver.UnwrapReceivedMessage(content)
+		require.NoError(t, err)
+		require.False(t, unwrapped.IsSync)
+
+		syncMessage, err := receiver.WrapSyncMessage(channelID)
+		require.NoError(t, err)
+		require.NotEmpty(t, syncMessage)
+		unwrapped, err = sender.UnwrapReceivedMessage(syncMessage)
+		require.NoError(t, err)
+		require.True(t, unwrapped.IsSync)
+		require.NotNil(t, unwrapped.Message)
+		require.Empty(t, *unwrapped.Message)
+		require.NotNil(t, unwrapped.ChannelId)
+		require.Equal(t, channelID, *unwrapped.ChannelId)
+		require.NotNil(t, unwrapped.MissingDeps)
+		require.Empty(t, *unwrapped.MissingDeps)
+		select {
+		case got := <-sent:
+			require.Equal(t, id, got)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for sync acknowledgement")
+		}
+	}
+
+	syncMessage, err := sender.WrapSyncMessage(channelID)
+	require.NoError(t, err)
+	unwrapped, err := observer.UnwrapReceivedMessage(syncMessage)
+	require.NoError(t, err)
+	require.True(t, unwrapped.IsSync)
+	require.NotNil(t, unwrapped.MissingDeps)
+	require.Len(t, *unwrapped.MissingDeps, 2)
+	require.ElementsMatch(t, []MessageID{"first", "second"}, []MessageID{
+		(*unwrapped.MissingDeps)[0].MessageID, (*unwrapped.MissingDeps)[1].MessageID,
+	})
+}
+
+func TestSyncDoesNotBecomeContentDependency(t *testing.T) {
+	sender, err := NewReliabilityManager(nil, nil)
+	require.NoError(t, err)
+	defer sender.Cleanup()
+	receiver, err := NewReliabilityManager(nil, nil)
+	require.NoError(t, err)
+	defer receiver.Cleanup()
+	observer, err := NewReliabilityManager(nil, nil)
+	require.NoError(t, err)
+	defer observer.Cleanup()
+
+	const channelID = "sync-only-channel"
+	for i := 0; i < 2; i++ {
+		msg, err := sender.WrapSyncMessage(channelID)
+		require.NoError(t, err)
+		unwrapped, err := receiver.UnwrapReceivedMessage(msg)
+		require.NoError(t, err)
+		require.True(t, unwrapped.IsSync)
+	}
+	content, err := sender.WrapOutgoingMessage([]byte("content"), "content-id", channelID)
+	require.NoError(t, err)
+	// This peer did not receive any of the sync messages.
+	unwrapped, err := observer.UnwrapReceivedMessage(content)
+	require.NoError(t, err)
+	require.False(t, unwrapped.IsSync)
+	require.NotNil(t, unwrapped.MissingDeps)
+	require.Empty(t, *unwrapped.MissingDeps)
+}
+
+func TestWrapSyncMessageNilManager(t *testing.T) {
+	var rm *ReliabilityManager
+	_, err := rm.WrapSyncMessage("channel")
+	require.ErrorIs(t, err, errEmptyReliabilityManager)
 }
 
 // Test dependency handling
