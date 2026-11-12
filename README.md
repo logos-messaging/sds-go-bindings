@@ -15,11 +15,16 @@ intervals, not actual transmissions, and does not transmit retries.
 
 ## Periodic sync messages
 
-`WrapSyncMessage(channelID)` creates a metadata-only sync for a channel.
-It does not add a content message to SDS history or wait for acknowledgement.
-`UnwrapReceivedMessage` processes its metadata and sets `IsSync` to true;
-callers should not treat the empty sync payload as application content.
-`OnPeriodicSync` is a notification to initiate sync, not a message to send.
+Call `EnsureChannel(channelID)` for channels to monitor, including after a
+restart. Call `Tick()` regularly; it returns due payloads tagged with their
+channel IDs for the caller to publish. A `TickEvent` may instead contain an
+error for one channel; other channel results are still returned.
+
+`UnwrapReceivedMessage` processes sync metadata and returns a nil `Message`
+because a sync has no application payload. Missing dependencies are still
+reported in `MissingDeps`; unwrap errors remain separate.
+Use `ChannelRetrievalHintProvider` when retrieval hints depend on the channel;
+the older message-ID-only callback remains supported as a fallback.
 
 ## Persistence
 
@@ -36,8 +41,8 @@ transactionally. Loading a new channel must return an empty `sds.ChannelData`
 without an error. Return storage errors from the methods rather than silently
 discarding them.
 
-The Nimble dependency is pinned to a nim-sds commit that includes the
-`sds_set_persistence_callback` persistence FFI.
+The Nimble dependency is pinned to a nim-sds commit that includes persistence
+callbacks and the `ensureChannel`/`tick` sync API.
 
 Persistence restores duplicate detection across manager restarts. SDS-R repair
 remains disabled because these bindings leave the participant ID empty.
@@ -68,9 +73,4 @@ make print-cgo     # the cgo flags for that build, to run Go yourself
 ```
 
 libsds builds with ORC; pass `NIM_PARAMS` to build it with other Nim flags.
-Consumers can use the Nimble tasks `libsds`, `libsdsAndroid`, and `libsdsIOS`
-with `NIM_PARAMS` set to their resolved dependency paths and `LIBSDS_OUT` set
-to the destination directory. `SDS_PKG_DIR` can explicitly select the resolved
-nim-sds package. Android requires `ANDROID_NDK_ROOT` and accepts `ARCH` and
-`ANDROID_API`; iOS accepts `ARCH`, `IPHONE_SDK`, and `IOS_TARGET`.
-The iOS task isolates the Nim runtime symbols in the static archive.
+Platform-specific libsds builds are owned by the consuming application.

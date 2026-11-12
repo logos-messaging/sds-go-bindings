@@ -15,11 +15,13 @@ package sds
 
 	typedef void (*FFICallback)(int ret, const char* msg, size_t len, void* userData);
 	typedef void (*SdsRetrievalHintProvider)(const char* messageId, char** hint, size_t* hintLen, void* userData);
+	typedef void (*SdsChannelRetrievalHintProvider)(const char* messageId, const char* channelId, char** hint, size_t* hintLen, void* userData);
 	typedef int (*SdsPersistenceCallback)(int operation, const uint8_t* channelId, size_t channelIdLen, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData);
 
 	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
 	int sds_wrap_outgoing_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
-	int sds_wrap_sync_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_ensure_channel(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
+	int sds_tick(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
 	int sds_unwrap_received_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
 	int sds_mark_dependencies_met(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
 	int sds_reset(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
@@ -27,11 +29,13 @@ package sds
 	int sds_destroy(void* ctx);
 	uint64_t sds_add_event_listener(void* ctx, const char* eventName, FFICallback callback, void* userData);
 	int sds_set_retrieval_hint_provider(void* ctx, SdsRetrievalHintProvider callback, void* userData);
+	int sds_set_channel_retrieval_hint_provider(void* ctx, SdsChannelRetrievalHintProvider callback, void* userData);
 	int sds_set_persistence_callback(void* ctx, SdsPersistenceCallback callback, void* userData);
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
 	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, uintptr_t ctx);
+	extern void sdsGlobalChannelRetrievalHintProvider(char* messageId, char* channelId, char** hint, size_t* hintLen, uintptr_t ctx);
 	extern int sdsGlobalPersistenceCallback(int operation, uint8_t* channelId, size_t channelIdLen, uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, uintptr_t ctx);
 
 	typedef struct {
@@ -109,6 +113,10 @@ package sds
 		sdsGlobalRetrievalHintProvider((char*) messageId, hint, hintLen, (uintptr_t) userData);
 	}
 
+	static void cGoSdsChannelRetrievalHintTrampoline(const char* messageId, const char* channelId, char** hint, size_t* hintLen, void* userData) {
+		sdsGlobalChannelRetrievalHintProvider((char*) messageId, (char*) channelId, hint, hintLen, (uintptr_t) userData);
+	}
+
 	static void cGoSdsAddEventListener(uintptr_t ctx, const char* eventName) {
 		// 'sdsGlobalEventCallback' is shared by all manager instances; we pass the
 		// ctx as userData so the dispatcher can route the event to the instance
@@ -118,6 +126,10 @@ package sds
 
 	static int cGoSdsSetRetrievalHintProvider(uintptr_t ctx) {
 		return sds_set_retrieval_hint_provider((void*) ctx, (SdsRetrievalHintProvider) cGoSdsRetrievalHintTrampoline, (void*) ctx);
+	}
+
+	static int cGoSdsSetChannelRetrievalHintProvider(uintptr_t ctx) {
+		return sds_set_channel_retrieval_hint_provider((void*) ctx, (SdsChannelRetrievalHintProvider) cGoSdsChannelRetrievalHintTrampoline, (void*) ctx);
 	}
 
 	static int cGoSdsPersistenceTrampoline(int operation, const uint8_t* channelId, size_t channelIdLen, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData) {
@@ -132,8 +144,12 @@ package sds
 		return sds_wrap_outgoing_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
-	static int cGoSdsWrapSyncMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
-		return sds_wrap_sync_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	static int cGoSdsEnsureChannel(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_ensure_channel((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
+	}
+
+	static int cGoSdsTick(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
+		return sds_tick((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
 
 	static int cGoSdsUnwrapReceivedMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
@@ -212,7 +228,7 @@ type sdsWrapRequest struct {
 	ChannelId string `cbor:"channelId"`
 }
 
-type sdsSyncRequest struct {
+type sdsChannelRequest struct {
 	ChannelId string `cbor:"channelId"`
 }
 
@@ -358,6 +374,11 @@ func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks)
 			return nil, fmt.Errorf("failed to register SDS persistence callback: code %d", int(ret))
 		}
 	}
+	if ret := C.cGoSdsSetChannelRetrievalHintProvider(C.uintptr_t(rm.rmCtx)); ret != C.RET_OK {
+		_ = C.cGoSdsDestroy(C.uintptr_t(rm.rmCtx))
+		unregisterReliabilityManager(rm)
+		return nil, fmt.Errorf("failed to register channel-aware SDS retrieval hint provider: code %d", int(ret))
+	}
 
 	rm.logger.Debug("successfully created reliability manager")
 	return rm, nil
@@ -390,6 +411,27 @@ func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C
 				*hintLen = C.size_t(len(hintBytes))
 			}
 		}
+	}
+}
+
+//export sdsGlobalChannelRetrievalHintProvider
+func sdsGlobalChannelRetrievalHintProvider(messageId *C.char, channelId *C.char, hint **C.char, hintLen *C.size_t, ctx C.uintptr_t) {
+	rm, ok := lookupReliabilityManager(uintptr(ctx))
+	if !ok {
+		return
+	}
+
+	var hintBytes []byte
+	if rm.callbacks.ChannelRetrievalHintProvider != nil {
+		hintBytes = rm.callbacks.ChannelRetrievalHintProvider(
+			MessageID(C.GoString(messageId)), C.GoString(channelId),
+		)
+	} else if rm.callbacks.RetrievalHintProvider != nil {
+		hintBytes = rm.callbacks.RetrievalHintProvider(MessageID(C.GoString(messageId)))
+	}
+	if len(hintBytes) > 0 {
+		*hint = (*C.char)(C.CBytes(hintBytes))
+		*hintLen = C.size_t(len(hintBytes))
 	}
 }
 
@@ -458,26 +500,49 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	return wrapResp.Message, nil
 }
 
-// WrapSyncMessage builds a metadata-only sync message for a channel.
-func (rm *ReliabilityManager) WrapSyncMessage(channelId string) ([]byte, error) {
+// EnsureChannel loads a channel so Tick can monitor it, including after restart.
+func (rm *ReliabilityManager) EnsureChannel(channelId string) error {
+	if rm == nil {
+		return errEmptyReliabilityManager
+	}
+
+	req := sdsRequest[sdsChannelRequest]{Req: sdsChannelRequest{ChannelId: channelId}}
+	_, err := rm.request("error EnsureChannel", req,
+		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
+			return C.cGoSdsEnsureChannel(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
+		})
+	return err
+}
+
+// Tick generates due sync payloads for all ensured channels. A per-channel
+// generation error is returned in that channel's TickEvent; request and
+// response decoding errors are returned as the method error.
+func (rm *ReliabilityManager) Tick() ([]TickEvent, error) {
 	if rm == nil {
 		return nil, errEmptyReliabilityManager
 	}
 
-	req := sdsRequest[sdsSyncRequest]{Req: sdsSyncRequest{ChannelId: channelId}}
-	reply, err := rm.request("error WrapSyncMessage", req,
+	reply, err := rm.request("error Tick", sdsEmptyRequest{},
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
-			return C.cGoSdsWrapSyncMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
+			return C.cGoSdsTick(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
 		return nil, err
 	}
 
-	var wrapResp sdsWrapResponse
-	if err := cbor.Unmarshal(reply, &wrapResp); err != nil {
-		return nil, fmt.Errorf("failed to decode sync wrap response: %w", err)
+	var responseJSON string
+	if err := cbor.Unmarshal(reply, &responseJSON); err != nil {
+		return nil, fmt.Errorf("failed to decode tick response: %w", err)
 	}
-	return wrapResp.Message, nil
+	return decodeTickEvents(responseJSON)
+}
+
+func decodeTickEvents(responseJSON string) ([]TickEvent, error) {
+	var events []TickEvent
+	if err := json.Unmarshal([]byte(responseJSON), &events); err != nil {
+		return nil, fmt.Errorf("failed to decode tick events: %w", err)
+	}
+	return events, nil
 }
 
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {
