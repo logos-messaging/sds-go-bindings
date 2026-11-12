@@ -30,8 +30,13 @@ func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId Mess
 	return nil, ErrLintBuild
 }
 
-// WrapSyncMessage returns an error in lint builds.
-func (rm *ReliabilityManager) WrapSyncMessage(channelId string) ([]byte, error) {
+// EnsureChannel returns an error in lint builds.
+func (rm *ReliabilityManager) EnsureChannel(channelId string) error {
+	return ErrLintBuild
+}
+
+// Tick returns an error in lint builds.
+func (rm *ReliabilityManager) Tick() ([]TickEvent, error) {
 	return nil, ErrLintBuild
 }
 

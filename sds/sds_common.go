@@ -15,13 +15,14 @@ const EventChanBufferSize = 1024
 var ErrNotSDS = errors.New("payload is not a valid SDS message")
 
 type EventCallbacks struct {
-	OnMessageReady        func(messageId MessageID, channelId string)
-	OnMessageSent         func(messageId MessageID, channelId string)
-	OnMessageExpired      func(messageId MessageID, channelId string)
-	OnMissingDependencies func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
-	OnPeriodicSync        func()
-	OnRepairReady         func(message []byte, channelId string)
-	RetrievalHintProvider func(messageId MessageID) []byte
+	OnMessageReady               func(messageId MessageID, channelId string)
+	OnMessageSent                func(messageId MessageID, channelId string)
+	OnMessageExpired             func(messageId MessageID, channelId string)
+	OnMissingDependencies        func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
+	OnPeriodicSync               func()
+	OnRepairReady                func(message []byte, channelId string)
+	RetrievalHintProvider        func(messageId MessageID) []byte
+	ChannelRetrievalHintProvider func(messageId MessageID, channelId string) []byte
 }
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
