@@ -14,6 +14,13 @@ const EventChanBufferSize = 1024
 // Callers supporting legacy unwrapped payloads may pass through only this error.
 var ErrNotSDS = errors.New("payload is not a valid SDS message")
 
+// ErrMessageRejected means the validator denied the incoming message.
+var ErrMessageRejected = errors.New("SDS message rejected by validator")
+
+// ErrValidationFailed means the validator could not authorize the message.
+// The validator's original error is logged by the manager.
+var ErrValidationFailed = errors.New("SDS message validation failed")
+
 type EventCallbacks struct {
 	OnMessageReady               func(messageId MessageID, channelId string)
 	OnMessageSent                func(messageId MessageID, channelId string)
@@ -31,6 +38,8 @@ type ReliabilityManager struct {
 	rmCtx       uintptr
 	callbacks   EventCallbacks
 	persistence PersistenceCallbacks
+	validatorMu sync.RWMutex
+	validator   Validator
 }
 
 // The event callback sends back the rm ctx to know to which

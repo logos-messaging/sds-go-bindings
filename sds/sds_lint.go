@@ -45,6 +45,16 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 	return nil, ErrLintBuild
 }
 
+// SetValidator returns an error in lint builds.
+func (rm *ReliabilityManager) SetValidator(validator Validator) error {
+	return ErrLintBuild
+}
+
+// UnwrapReceivedMessageWithContext returns an error in lint builds.
+func (rm *ReliabilityManager) UnwrapReceivedMessageWithContext(message, validationContext []byte) (*UnwrappedMessage, error) {
+	return nil, ErrLintBuild
+}
+
 // MarkDependenciesMet returns an error in lint builds.
 func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channelId string) error {
 	return ErrLintBuild
