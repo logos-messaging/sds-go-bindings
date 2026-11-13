@@ -1,7 +1,8 @@
-# Nimble resolves nim-sds and owns the library build; Go resolves the Go side;
-# this Makefile links them together.
+# Build a host libsds for this Go module's tests. Platform-specific builds are
+# owned by consuming applications.
 
 NIMBLE ?= nimble
+NIM ?= $(firstword $(wildcard $(CURDIR)/nimbledeps/pkgs2/nim-*/bin/nim $(CURDIR)/nimbledeps/pkgs2/nim-*/bin/nim.exe))
 GO ?= go
 
 LIB_DIR ?= $(CURDIR)/build
@@ -28,15 +29,23 @@ nimble.paths: nimble.lock sds_go_bindings.nimble
 	rm -rf nimbledeps
 	$(NIMBLE) setup --localdeps -y
 
-# Plain nim, so nim-sds builds from this resolution and not from its own lock.
-# nimble shell puts the Nim this resolution selected on PATH.
+# Use the compiler pinned by this resolution; the path flags also keep nim-sds
+# on this dependency resolution instead of its own lock.
 # libsds.h includes generated/sds.h; both go next to the library.
+# Pinned chronos lacks closeThreadDispatcher; ffi requires accepting that leak.
 $(LIB): | nimble.paths
 	@mkdir -p $(LIB_DIR)
-	sds="$$($(NIMBLE) path sds)" && \
-		eval "$(NIMBLE) shell nim c --skipParentCfg $(NIM_PARAMS) $$(tr '\r\n' '  ' < $(CURDIR)/nimble.paths) \
-			-d:ffiOutputDir=\"$(LIB_DIR)/generated\" --nimcache:\"$(LIB_DIR)/nimcache\" \
-			--app:lib --out:\"$@\" \"$$sds/library/libsds.nim\"" && \
+	@test -n "$(NIM)" || { echo "ERROR: Nim compiler not found in nimbledeps" >&2; exit 1; }
+	sds="$$($(NIMBLE) path sds)" || exit $$?; \
+		set --; while IFS= read -r arg; do \
+			case "$$arg" in \
+				--path:*) arg=$${arg#--path:}; arg=$${arg#\"}; arg=$${arg%\"}; arg=--path:$$arg ;; \
+			esac; \
+			set -- "$$@" "$$arg"; \
+		done < $(CURDIR)/nimble.paths; \
+		$(NIM) c --skipParentCfg $(NIM_PARAMS) -d:ignoreLeakCloseDispatcher "$$@" \
+			"-d:ffiOutputDir=$(LIB_DIR)/generated" "--nimcache:$(LIB_DIR)/nimcache" \
+			--app:lib "--out:$@" "$$sds/library/libsds.nim" && \
 		cp "$$sds/library/libsds.h" "$(LIB_DIR)/"
 	@test -f $@ || (echo "ERROR: $@ was not produced" && exit 1)
 

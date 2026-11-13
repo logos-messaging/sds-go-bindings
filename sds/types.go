@@ -13,6 +13,14 @@ type UnwrappedMessage struct {
 	ChannelId   *string         `json:"channelId"`
 }
 
+// TickEvent is the result for one ensured channel. A payload is present when
+// the channel is due for sync; Error is set when generation failed for it.
+type TickEvent struct {
+	ChannelID string `json:"channelId"`
+	Payload   []byte `json:"payload,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 type HistoryUpdate struct {
 	Append []HistoryMessage `json:"append"`
 	Evict  []string         `json:"evict"`
