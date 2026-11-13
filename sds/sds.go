@@ -17,6 +17,7 @@ package sds
 	typedef void (*SdsRetrievalHintProvider)(const char* messageId, char** hint, size_t* hintLen, void* userData);
 	typedef void (*SdsChannelRetrievalHintProvider)(const char* messageId, const uint8_t* channelId, size_t channelIdLen, char** hint, size_t* hintLen, void* userData);
 	typedef int (*SdsPersistenceCallback)(int operation, const uint8_t* channelId, size_t channelIdLen, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData);
+	typedef int (*SdsValidatorCallback)(const uint8_t* channelId, size_t channelIdLen, const uint8_t* content, size_t contentLen, const uint8_t* senderId, size_t senderIdLen, const uint8_t* validationContext, size_t validationContextLen, void* userData);
 
 	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
 	int sds_wrap_outgoing_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
@@ -31,12 +32,14 @@ package sds
 	int sds_set_retrieval_hint_provider(void* ctx, SdsRetrievalHintProvider callback, void* userData);
 	int sds_set_channel_retrieval_hint_provider(void* ctx, SdsChannelRetrievalHintProvider callback, void* userData);
 	int sds_set_persistence_callback(void* ctx, SdsPersistenceCallback callback, void* userData);
+	int sds_set_validator(void* ctx, SdsValidatorCallback callback, void* userData, FFICallback completionCallback, void* completionUserData);
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
 	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, uintptr_t ctx);
 	extern void sdsGlobalChannelRetrievalHintProvider(char* messageId, uint8_t* channelId, size_t channelIdLen, char** hint, size_t* hintLen, uintptr_t ctx);
 	extern int sdsGlobalPersistenceCallback(int operation, uint8_t* channelId, size_t channelIdLen, uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, uintptr_t ctx);
+	extern int sdsGlobalValidatorCallback(uint8_t* channelId, size_t channelIdLen, uint8_t* content, size_t contentLen, uint8_t* senderId, size_t senderIdLen, uint8_t* validationContext, size_t validationContextLen, uintptr_t ctx);
 
 	typedef struct {
 		int ret;
@@ -140,6 +143,14 @@ package sds
 		return sds_set_persistence_callback((void*) ctx, (SdsPersistenceCallback) cGoSdsPersistenceTrampoline, (void*) ctx);
 	}
 
+	static int cGoSdsValidatorTrampoline(const uint8_t* channelId, size_t channelIdLen, const uint8_t* content, size_t contentLen, const uint8_t* senderId, size_t senderIdLen, const uint8_t* validationContext, size_t validationContextLen, void* userData) {
+		return sdsGlobalValidatorCallback((uint8_t*) channelId, channelIdLen, (uint8_t*) content, contentLen, (uint8_t*) senderId, senderIdLen, (uint8_t*) validationContext, validationContextLen, (uintptr_t) userData);
+	}
+
+	static int cGoSdsSetValidator(uintptr_t ctx, int enabled, void* resp) {
+		return sds_set_validator((void*) ctx, enabled ? (SdsValidatorCallback) cGoSdsValidatorTrampoline : NULL, enabled ? (void*) ctx : NULL, (FFICallback) SdsGoCallback, resp);
+	}
+
 	static int cGoSdsWrapOutgoingMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
 		return sds_wrap_outgoing_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
@@ -211,6 +222,21 @@ func awaitResp(fire func(resp unsafe.Pointer)) unsafe.Pointer {
 	return resp
 }
 
+// awaitRespWithDispatch also handles native setters that can fail before
+// enqueueing a request and therefore cannot deliver the response callback.
+func awaitRespWithDispatch(fire func(resp unsafe.Pointer) C.int) unsafe.Pointer {
+	resp := C.allocResp()
+	done := make(chan struct{})
+	respWaiters.Store(uintptr(resp), done)
+	if dispatchRet := fire(resp); dispatchRet != C.RET_OK {
+		(*C.SdsResp)(resp).ret = dispatchRet
+		close(done)
+	}
+	<-done
+	respWaiters.Delete(uintptr(resp))
+	return resp
+}
+
 // Request and reply payloads, CBOR-encoded. Field names must match the {.ffi.}
 // objects in nim-sds' library/libsds.nim; each request travels inside the
 // envelope named after the Nim proc's parameter.
@@ -239,7 +265,8 @@ type sdsWrapResponse struct {
 }
 
 type sdsUnwrapRequest struct {
-	Message []byte `cbor:"message"`
+	Message           []byte `cbor:"message"`
+	ValidationContext []byte `cbor:"validationContext,omitempty"`
 }
 
 type sdsMarkDependenciesRequest struct {
@@ -453,6 +480,8 @@ func (rm *ReliabilityManager) Cleanup() error {
 	if rm == nil {
 		return errEmptyReliabilityManager
 	}
+	rm.validatorConfigMu.Lock()
+	defer rm.validatorConfigMu.Unlock()
 
 	rm.logger.Debug("cleaning up reliability manager")
 
@@ -461,6 +490,9 @@ func (rm *ReliabilityManager) Cleanup() error {
 	}
 
 	unregisterReliabilityManager(rm)
+	rm.validatorMu.Lock()
+	rm.validator = nil
+	rm.validatorMu.Unlock()
 	rm.logger.Debug("cleaned up reliability manager")
 	return nil
 }
@@ -569,19 +601,72 @@ func decodeTickEvents(responseJSON string) ([]TickEvent, error) {
 	return response.Events, nil
 }
 
+// SetValidator registers or replaces the optional incoming message validator.
+// It returns after the native worker has applied the change, so subsequent
+// unwraps use the configured validator. Pass nil to disable validation.
+// Configure it before accepting messages.
+func (rm *ReliabilityManager) SetValidator(validator Validator) error {
+	if rm == nil {
+		return errEmptyReliabilityManager
+	}
+	rm.validatorConfigMu.Lock()
+	defer rm.validatorConfigMu.Unlock()
+
+	rm.validatorMu.Lock()
+	previous := rm.validator
+	rm.validator = validator
+	rm.validatorMu.Unlock()
+
+	var enabled C.int
+	if validator != nil {
+		enabled = 1
+	}
+	resp := awaitRespWithDispatch(func(resp unsafe.Pointer) C.int {
+		return C.cGoSdsSetValidator(C.uintptr_t(rm.rmCtx), enabled, resp)
+	})
+	defer C.freeResp(resp)
+	if ret := C.getRet(resp); ret != C.RET_OK {
+		rm.validatorMu.Lock()
+		rm.validator = previous
+		rm.validatorMu.Unlock()
+		message := respString(resp)
+		if message == "" {
+			return fmt.Errorf("failed to register SDS validator: code %d", int(ret))
+		}
+		return fmt.Errorf("failed to register SDS validator: %s", message)
+	}
+	return nil
+}
+
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {
+	return rm.UnwrapReceivedMessageWithContext(message, nil)
+}
+
+// UnwrapReceivedMessageWithContext passes opaque host context to the validator.
+// Context is local to this request and is never included in the SDS wire message.
+func (rm *ReliabilityManager) UnwrapReceivedMessageWithContext(message, validationContext []byte) (*UnwrappedMessage, error) {
 	if rm == nil {
 		return nil, errEmptyReliabilityManager
 	}
+	rm.validatorConfigMu.RLock()
+	defer rm.validatorConfigMu.RUnlock()
 
-	reply, err := rm.request("error UnwrapReceivedMessage", sdsRequest[sdsUnwrapRequest]{Req: sdsUnwrapRequest{Message: message}},
+	reply, err := rm.request("error UnwrapReceivedMessage", sdsRequest[sdsUnwrapRequest]{Req: sdsUnwrapRequest{
+		Message: message, ValidationContext: validationContext,
+	}},
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
 			return C.cGoSdsUnwrapReceivedMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
-		if nativeErr, ok := err.(*nativeRequestError); ok &&
-			nativeErr.message == "error processing unwrap request: reDeserializationError" {
-			return nil, fmt.Errorf("%w: %w", ErrNotSDS, err)
+		if nativeErr, ok := err.(*nativeRequestError); ok {
+			switch nativeErr.message {
+			case "error processing unwrap request: reDeserializationError":
+				return nil, fmt.Errorf("%w: %w", ErrNotSDS, err)
+			case "error processing unwrap request: reMessageRejected":
+				return nil, fmt.Errorf("%w: %w", ErrMessageRejected, err)
+			case "error processing unwrap request: reValidationError":
+				return nil, fmt.Errorf("%w: %w", ErrValidationFailed, err)
+			}
 		}
 		return nil, err
 	}
