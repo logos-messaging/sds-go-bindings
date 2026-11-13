@@ -54,6 +54,129 @@ func TestEnsureChannelAndTick(t *testing.T) {
 	require.Error(t, rm.EnsureChannel(""))
 }
 
+func TestTickGeneratedSyncRoundTrip(t *testing.T) {
+	const syncInterval = 2 * time.Millisecond
+	const channelID = "tick-round-trip"
+	const messageID = MessageID("tick-content")
+
+	sender, err := newReliabilityManager(nil, nil, syncInterval)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
+	receiver, err := newReliabilityManager(nil, nil, syncInterval)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
+
+	sent := make(chan msgEvent, 1)
+	ready := make(chan msgEvent, 1)
+	sender.RegisterCallbacks(EventCallbacks{
+		OnMessageSent: func(id MessageID, channel string) {
+			sent <- msgEvent{MessageId: id, ChannelId: channel}
+		},
+		OnMessageReady: func(id MessageID, channel string) {
+			ready <- msgEvent{MessageId: id, ChannelId: channel}
+		},
+	})
+
+	wrapped, err := sender.WrapOutgoingMessage([]byte("content"), messageID, channelID)
+	require.NoError(t, err)
+	_, err = sender.WrapOutgoingMessage([]byte("other-channel content"), messageID, "tick-other-channel")
+	require.NoError(t, err)
+	received, err := receiver.UnwrapReceivedMessage(wrapped)
+	require.NoError(t, err)
+	require.NotNil(t, received.Message)
+	require.Equal(t, []byte("content"), *received.Message)
+
+	syncEvent := waitForTickPayload(t, receiver, channelID)
+	unwrappedSync, err := sender.UnwrapReceivedMessage(syncEvent.Payload)
+	require.NoError(t, err)
+	require.Nil(t, unwrappedSync.Message)
+	require.Empty(t, *unwrappedSync.MissingDeps)
+	require.Equal(t, channelID, *unwrappedSync.ChannelId)
+
+	select {
+	case event := <-sent:
+		require.Equal(t, messageID, event.MessageId)
+		require.Equal(t, channelID, event.ChannelId)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for sync to acknowledge content")
+	}
+
+	select {
+	case event := <-sent:
+		t.Fatalf("sync crossed channel boundaries: %+v", event)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	select {
+	case event := <-ready:
+		t.Fatalf("metadata-only sync triggered OnMessageReady: %+v", event)
+	case <-time.After(25 * time.Millisecond):
+	}
+}
+
+func TestTickGeneratedSyncReportsMissingDependencies(t *testing.T) {
+	const syncInterval = 2 * time.Millisecond
+	const channelID = "tick-missing-dependency"
+	const dependencyID = MessageID("missing-content")
+	const laterMessageID = MessageID("later-content")
+
+	sender, err := newReliabilityManager(nil, nil, syncInterval)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
+	receiver, err := newReliabilityManager(nil, nil, syncInterval)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
+
+	missing := make(chan []HistoryEntry, 2)
+	ready := make(chan MessageID, 1)
+	receiver.RegisterCallbacks(EventCallbacks{
+		OnMissingDependencies: func(_ MessageID, deps []HistoryEntry, _ string) {
+			missing <- deps
+		},
+		OnMessageReady: func(id MessageID, _ string) {
+			ready <- id
+		},
+	})
+
+	_, err = sender.WrapOutgoingMessage([]byte("first"), dependencyID, channelID)
+	require.NoError(t, err)
+	later, err := sender.WrapOutgoingMessage([]byte("second"), laterMessageID, channelID)
+	require.NoError(t, err)
+
+	received, err := receiver.UnwrapReceivedMessage(later)
+	require.NoError(t, err)
+	require.NotNil(t, received.MissingDeps)
+	require.True(t, hasHistoryEntry(*received.MissingDeps, dependencyID))
+
+	syncEvent := waitForTickPayload(t, sender, channelID)
+	unwrappedSync, err := receiver.UnwrapReceivedMessage(syncEvent.Payload)
+	require.NoError(t, err)
+	require.Nil(t, unwrappedSync.Message)
+	require.NotNil(t, unwrappedSync.MissingDeps)
+	require.True(t, hasHistoryEntry(*unwrappedSync.MissingDeps, dependencyID))
+
+	foundSyncMissingDependency := false
+	for range 2 {
+		select {
+		case deps := <-missing:
+			for _, dep := range deps {
+				if dep.MessageID == dependencyID {
+					foundSyncMissingDependency = true
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for missing-dependencies callbacks")
+		}
+	}
+	require.True(t, foundSyncMissingDependency, "sync did not report the missing dependency")
+
+	select {
+	case id := <-ready:
+		t.Fatalf("metadata-only sync triggered OnMessageReady: %s", id)
+	case <-time.After(25 * time.Millisecond):
+	}
+}
+
 func TestTickAndEnsureChannelNilManager(t *testing.T) {
 	var rm *ReliabilityManager
 	require.ErrorIs(t, rm.EnsureChannel("channel"), errEmptyReliabilityManager)
@@ -793,7 +916,7 @@ func TestChannelRetrievalHints(t *testing.T) {
 		},
 	})
 
-	for _, channelID := range []string{"hints-a", "hints-b"} {
+	for _, channelID := range []string{"hints-a", "hints-b", "hints\x00a", "hints\x00b"} {
 		_, err := sender.WrapOutgoingMessage([]byte("first"), "same-id", channelID)
 		require.NoError(t, err)
 		second, err := sender.WrapOutgoingMessage([]byte("second"), MessageID("second-"+channelID), channelID)
@@ -804,4 +927,33 @@ func TestChannelRetrievalHints(t *testing.T) {
 		require.Len(t, *unwrapped.MissingDeps, 1)
 		require.Equal(t, []byte(channelID+":same-id"), (*unwrapped.MissingDeps)[0].RetrievalHint)
 	}
+}
+
+func waitForTickPayload(t *testing.T, rm *ReliabilityManager, channelID string) TickEvent {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		events, err := rm.Tick()
+		require.NoError(t, err)
+		for _, event := range events {
+			if event.Error != "" {
+				require.Failf(t, "tick failed", "channel %q: %s", event.ChannelID, event.Error)
+			}
+			if event.ChannelID == channelID && len(event.Payload) > 0 {
+				return event
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for a tick payload for channel %q", channelID)
+	return TickEvent{}
+}
+
+func hasHistoryEntry(entries []HistoryEntry, messageID MessageID) bool {
+	for _, entry := range entries {
+		if entry.MessageID == messageID {
+			return true
+		}
+	}
+	return false
 }

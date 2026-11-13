@@ -15,7 +15,7 @@ package sds
 
 	typedef void (*FFICallback)(int ret, const char* msg, size_t len, void* userData);
 	typedef void (*SdsRetrievalHintProvider)(const char* messageId, char** hint, size_t* hintLen, void* userData);
-	typedef void (*SdsChannelRetrievalHintProvider)(const char* messageId, const char* channelId, char** hint, size_t* hintLen, void* userData);
+	typedef void (*SdsChannelRetrievalHintProvider)(const char* messageId, const uint8_t* channelId, size_t channelIdLen, char** hint, size_t* hintLen, void* userData);
 	typedef int (*SdsPersistenceCallback)(int operation, const uint8_t* channelId, size_t channelIdLen, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData);
 
 	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
@@ -35,7 +35,7 @@ package sds
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
 	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, uintptr_t ctx);
-	extern void sdsGlobalChannelRetrievalHintProvider(char* messageId, char* channelId, char** hint, size_t* hintLen, uintptr_t ctx);
+	extern void sdsGlobalChannelRetrievalHintProvider(char* messageId, uint8_t* channelId, size_t channelIdLen, char** hint, size_t* hintLen, uintptr_t ctx);
 	extern int sdsGlobalPersistenceCallback(int operation, uint8_t* channelId, size_t channelIdLen, uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, uintptr_t ctx);
 
 	typedef struct {
@@ -113,8 +113,8 @@ package sds
 		sdsGlobalRetrievalHintProvider((char*) messageId, hint, hintLen, (uintptr_t) userData);
 	}
 
-	static void cGoSdsChannelRetrievalHintTrampoline(const char* messageId, const char* channelId, char** hint, size_t* hintLen, void* userData) {
-		sdsGlobalChannelRetrievalHintProvider((char*) messageId, (char*) channelId, hint, hintLen, (uintptr_t) userData);
+	static void cGoSdsChannelRetrievalHintTrampoline(const char* messageId, const uint8_t* channelId, size_t channelIdLen, char** hint, size_t* hintLen, void* userData) {
+		sdsGlobalChannelRetrievalHintProvider((char*) messageId, (uint8_t*) channelId, channelIdLen, hint, hintLen, (uintptr_t) userData);
 	}
 
 	static void cGoSdsAddEventListener(uintptr_t ctx, const char* eventName) {
@@ -178,6 +178,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/fxamacker/cbor/v2"
@@ -214,8 +215,9 @@ func awaitResp(fire func(resp unsafe.Pointer)) unsafe.Pointer {
 // objects in nim-sds' library/libsds.nim; each request travels inside the
 // envelope named after the Nim proc's parameter.
 type sdsConfig struct {
-	ParticipantId      string `cbor:"participantId"`
-	PersistenceEnabled bool   `cbor:"persistenceEnabled"`
+	ParticipantId         string `cbor:"participantId"`
+	PersistenceEnabled    bool   `cbor:"persistenceEnabled"`
+	SyncMessageIntervalMs int64  `cbor:"syncMessageIntervalMs,omitempty"` // test-only override
 }
 
 type sdsCreateRequest struct {
@@ -327,6 +329,10 @@ func (rm *ReliabilityManager) request(
 // NewReliabilityManager creates a manager with the given persistence backend.
 // Pass nil for persistence to keep channel state in memory only.
 func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks) (*ReliabilityManager, error) {
+	return newReliabilityManager(logger, persistence, 0)
+}
+
+func newReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks, syncMessageInterval time.Duration) (*ReliabilityManager, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -340,8 +346,9 @@ func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks)
 	// An empty participantId keeps SDS-R disabled. Persistence restores
 	// duplicate detection without enabling repair.
 	reqCbor, err := cbor.Marshal(sdsCreateRequest{Config: sdsConfig{
-		ParticipantId:      "",
-		PersistenceEnabled: persistence != nil,
+		ParticipantId:         "",
+		PersistenceEnabled:    persistence != nil,
+		SyncMessageIntervalMs: int64(syncMessageInterval / time.Millisecond),
 	}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode config: %w", err)
@@ -415,7 +422,7 @@ func sdsGlobalRetrievalHintProvider(messageId *C.char, hint **C.char, hintLen *C
 }
 
 //export sdsGlobalChannelRetrievalHintProvider
-func sdsGlobalChannelRetrievalHintProvider(messageId *C.char, channelId *C.char, hint **C.char, hintLen *C.size_t, ctx C.uintptr_t) {
+func sdsGlobalChannelRetrievalHintProvider(messageId *C.char, channelId *C.uint8_t, channelIdLen C.size_t, hint **C.char, hintLen *C.size_t, ctx C.uintptr_t) {
 	rm, ok := lookupReliabilityManager(uintptr(ctx))
 	if !ok {
 		return
@@ -424,7 +431,8 @@ func sdsGlobalChannelRetrievalHintProvider(messageId *C.char, channelId *C.char,
 	var hintBytes []byte
 	if rm.callbacks.ChannelRetrievalHintProvider != nil {
 		hintBytes = rm.callbacks.ChannelRetrievalHintProvider(
-			MessageID(C.GoString(messageId)), C.GoString(channelId),
+			MessageID(C.GoString(messageId)),
+			C.GoStringN((*C.char)(unsafe.Pointer(channelId)), C.int(channelIdLen)),
 		)
 	} else if rm.callbacks.RetrievalHintProvider != nil {
 		hintBytes = rm.callbacks.RetrievalHintProvider(MessageID(C.GoString(messageId)))
