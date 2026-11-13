@@ -33,16 +33,19 @@ nimble.paths: nimble.lock sds_go_bindings.nimble
 # on this dependency resolution instead of its own lock.
 # libsds.h includes generated/sds.h; both go next to the library.
 # Pinned chronos lacks closeThreadDispatcher; ffi requires accepting that leak.
-$(LIB): | nimble.paths
+$(LIB): nimble.lock sds_go_bindings.nimble | nimble.paths
 	@mkdir -p $(LIB_DIR)
 	@test -n "$(NIM)" || { echo "ERROR: Nim compiler not found in nimbledeps" >&2; exit 1; }
-	sds="$$($(NIMBLE) path sds)" || exit $$?; \
-		set --; while IFS= read -r arg; do \
+	sds=""; set --; while IFS= read -r arg; do \
 			case "$$arg" in \
 				--path:*) arg=$${arg#--path:}; arg=$${arg#\"}; arg=$${arg%\"}; arg=--path:$$arg ;; \
 			esac; \
+			case "$$arg" in \
+				--path:*/sds) sds=$${arg#--path:}; sds=$${sds%/sds} ;; \
+			esac; \
 			set -- "$$@" "$$arg"; \
 		done < $(CURDIR)/nimble.paths; \
+		test -n "$$sds" || { echo "ERROR: SDS path not found in nimble.paths" >&2; exit 1; }; \
 		$(NIM) c --skipParentCfg $(NIM_PARAMS) -d:ignoreLeakCloseDispatcher "$$@" \
 			"-d:ffiOutputDir=$(LIB_DIR)/generated" "--nimcache:$(LIB_DIR)/nimcache" \
 			--app:lib "--out:$@" "$$sds/library/libsds.nim" && \
