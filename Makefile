@@ -2,7 +2,7 @@
 # owned by consuming applications.
 
 NIMBLE ?= nimble
-NIM ?= $(firstword $(wildcard $(CURDIR)/nimbledeps/pkgs2/nim-*/bin/nim))
+NIM ?= $(firstword $(wildcard $(CURDIR)/nimbledeps/pkgs2/nim-*/bin/nim $(CURDIR)/nimbledeps/pkgs2/nim-*/bin/nim.exe))
 GO ?= go
 
 LIB_DIR ?= $(CURDIR)/build
@@ -35,6 +35,7 @@ nimble.paths: nimble.lock sds_go_bindings.nimble
 # Pinned chronos lacks closeThreadDispatcher; ffi requires accepting that leak.
 $(LIB): | nimble.paths
 	@mkdir -p $(LIB_DIR)
+	@test -n "$(NIM)" || { echo "ERROR: Nim compiler not found in nimbledeps" >&2; exit 1; }
 	sds="$$($(NIMBLE) path sds)" || exit $$?; \
 		set --; while IFS= read -r arg; do \
 			case "$$arg" in \
