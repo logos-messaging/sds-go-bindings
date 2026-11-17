@@ -34,29 +34,13 @@ the older message-ID-only callback remains supported as a fallback.
 
 ## Incoming message validation
 
-Register an optional `sds.Validator` with `manager.SetValidator(validator)`.
-Its `Validate(sds.ValidationMessage) (bool, error)` method receives the decoded
-channel ID, content, untrusted SDS sender ID, and optional host context.
-Call `UnwrapReceivedMessageWithContext(payload, context)` to provide context
-such as authenticated transport sender information. The context belongs to
-that request and is not part of the wire message. The existing
-`UnwrapReceivedMessage(payload)` method supplies empty context.
+Register a `sds.Validator` with `SetValidator`; it returns after the native
+worker applies the change. Use `UnwrapReceivedMessageWithContext` to pass
+request-local host context such as an authenticated transport identity.
+`SetValidator(nil)` disables validation.
 
-Validation runs synchronously on the native worker after decoding, before
-channel loading or any SDS state processing, including for duplicates and
-empty-content sync messages. Validators must not re-enter the same manager.
-Input slices are copied into Go-owned memory and may be retained.
-Validators shared between managers must be safe for concurrent calls.
-
-Returning `false, nil` rejects the message with `sds.ErrMessageRejected`.
-Returning an error logs the original error and returns `sds.ErrValidationFailed`.
-Neither outcome changes SDS state or matches `sds.ErrNotSDS`; do not use the
-legacy unwrapped-payload fallback for validation failures.
-
-Configure the validator before receiving messages. `SetValidator(nil)` disables
-validation, and managers without a validator retain the existing behavior.
-Successful `Cleanup` clears the validator; failed cleanup retains callback
-state because native teardown may not have completed.
+The API and validation semantics are documented in
+[nim-sds' incoming message validation guide](https://github.com/logos-messaging/nim-sds#incoming-message-validation).
 
 ## Persistence
 

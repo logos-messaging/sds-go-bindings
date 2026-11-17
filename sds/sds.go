@@ -222,8 +222,9 @@ func awaitResp(fire func(resp unsafe.Pointer)) unsafe.Pointer {
 	return resp
 }
 
-// awaitRespWithDispatch also handles native setters that can fail before
-// enqueueing a request and therefore cannot deliver the response callback.
+// awaitRespWithDispatch handles native setters whose immediate return reports
+// dispatch status and whose callback reports when the worker applies the change.
+// A dispatch failure cannot deliver that completion callback.
 func awaitRespWithDispatch(fire func(resp unsafe.Pointer) C.int) unsafe.Pointer {
 	resp := C.allocResp()
 	done := make(chan struct{})
@@ -600,9 +601,8 @@ func decodeTickEvents(responseJSON string) ([]TickEvent, error) {
 }
 
 // SetValidator registers or replaces the optional incoming message validator.
-// It returns after the native worker has applied the change, so subsequent
-// unwraps use the configured validator. Pass nil to disable validation.
-// Configure it before accepting messages.
+// It returns after the native worker applies the change. Pass nil to disable
+// validation; configure it before accepting messages.
 func (rm *ReliabilityManager) SetValidator(validator Validator) error {
 	if rm == nil {
 		return errEmptyReliabilityManager

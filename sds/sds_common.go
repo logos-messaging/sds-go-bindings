@@ -37,7 +37,9 @@ type ReliabilityManager struct {
 	rmCtx       uintptr
 	callbacks   EventCallbacks
 	persistence PersistenceCallbacks
-	// Serializes validator registration with incoming unwrap requests.
+	// Native FFI requests can arrive from different OS-thread queues. Serialize
+	// configuration changes with unwraps so an in-flight registration cannot be
+	// overtaken by an unwrap before its completion acknowledgement.
 	validatorConfigMu sync.RWMutex
 	validatorMu       sync.RWMutex
 	validator         Validator
