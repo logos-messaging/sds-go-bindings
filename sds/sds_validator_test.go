@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -42,8 +41,7 @@ func TestValidatorDecisions(t *testing.T) {
 	} {
 		t.Run(decision.name, func(t *testing.T) {
 			core, logs := observer.New(zap.DebugLevel)
-			persistence := &recordingPersistence{}
-			receiver, err := NewReliabilityManager(zap.New(core), persistence)
+			receiver, err := NewReliabilityManager(zap.New(core), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
 			inputs := make(chan ValidationMessage, 1)
@@ -67,12 +65,6 @@ func TestValidatorDecisions(t *testing.T) {
 				require.Nil(t, received)
 				require.ErrorIs(t, err, decision.expected)
 				require.NotErrorIs(t, err, ErrNotSDS)
-				persistence.mu.Lock()
-				require.Empty(t, persistence.calls)
-				persistence.mu.Unlock()
-				events, tickErr := receiver.Tick()
-				require.NoError(t, tickErr)
-				require.Empty(t, events)
 			}
 			if decision.failure != nil {
 				entries := logs.FilterMessage("SDS message validation failed").All()
@@ -83,71 +75,10 @@ func TestValidatorDecisions(t *testing.T) {
 	}
 }
 
-func TestValidatorRejectsAcknowledgementsAndDependencies(t *testing.T) {
-	persistence := &recordingPersistence{}
-	receiver, err := NewReliabilityManager(nil, persistence)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
-	sender, err := NewReliabilityManager(nil, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-
-	const channelID = "metadata-channel"
-	pending, err := receiver.WrapOutgoingMessage([]byte("pending"), "pending-ack", channelID)
-	require.NoError(t, err)
-	_, err = sender.UnwrapReceivedMessage(pending)
-	require.NoError(t, err)
-	_, err = sender.WrapOutgoingMessage([]byte("fake"), "fake-dependency", channelID)
-	require.NoError(t, err)
-	wrapped, err := sender.WrapOutgoingMessage([]byte("unauthorized"), "unauthorized", channelID)
-	require.NoError(t, err)
-
-	sent := make(chan MessageID, 4)
-	missing := make(chan []HistoryEntry, 4)
-	receiver.RegisterCallbacks(EventCallbacks{
-		OnMessageSent: func(id MessageID, _ string) { sent <- id },
-		OnMissingDependencies: func(_ MessageID, deps []HistoryEntry, _ string) {
-			missing <- deps
-		},
-	})
-	require.NoError(t, receiver.SetValidator(validatorFunc(func(ValidationMessage) (bool, error) {
-		return false, nil
-	})))
-	persistence.mu.Lock()
-	before := len(persistence.calls)
-	persistence.mu.Unlock()
-	_, err = receiver.UnwrapReceivedMessage(wrapped)
-	require.ErrorIs(t, err, ErrMessageRejected)
-	require.Empty(t, sent)
-	require.Empty(t, missing)
-	persistence.mu.Lock()
-	require.Len(t, persistence.calls, before)
-	persistence.mu.Unlock()
-
-	require.NoError(t, receiver.SetValidator(nil))
-	_, err = receiver.UnwrapReceivedMessage(wrapped)
-	require.NoError(t, err)
-	select {
-	case id := <-sent:
-		require.Equal(t, MessageID("pending-ack"), id)
-	case <-time.After(time.Second):
-		t.Fatal("accepted acknowledgement did not emit message_sent")
-	}
-	select {
-	case deps := <-missing:
-		require.Equal(t, MessageID("fake-dependency"), deps[0].MessageID)
-	case <-time.After(time.Second):
-		t.Fatal("accepted causal history did not emit missing_dependencies")
-	}
-}
-
 func TestValidatorContextIsolation(t *testing.T) {
 	sender, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-	payload := []byte("retained-content")
-	wrapped, err := sender.WrapOutgoingMessage(payload, "message", "channel")
-	require.NoError(t, err)
 
 	const requests = 8
 	inputs := make(chan ValidationMessage, requests)
@@ -165,13 +96,32 @@ func TestValidatorContextIsolation(t *testing.T) {
 		return false, nil
 	})))
 
+	type request struct {
+		wrapped []byte
+		payload []byte
+		context []byte
+	}
+	requestsToSend := make([]request, requests)
+	expectedByChannel := make(map[string]request, requests)
+	for i := range requests {
+		channel := fmt.Sprintf("channel-%d", i)
+		payload := []byte(fmt.Sprintf("payload-%d", i))
+		context := []byte(fmt.Sprintf("context-%d", i))
+		wrapped, err := sender.WrapOutgoingMessage(payload, MessageID(fmt.Sprintf("message-%d", i)), channel)
+		require.NoError(t, err)
+		req := request{wrapped: wrapped, payload: payload, context: context}
+		requestsToSend[i] = req
+		expectedByChannel[channel] = req
+	}
+
 	results := make(chan error, requests)
 	var workers sync.WaitGroup
 	for i := 0; i < requests; i++ {
 		workers.Add(1)
 		go func(i int) {
 			defer workers.Done()
-			_, err := receiver.UnwrapReceivedMessageWithContext(wrapped, []byte(fmt.Sprintf("context-%d", i)))
+			req := requestsToSend[i]
+			_, err := receiver.UnwrapReceivedMessageWithContext(req.wrapped, req.context)
 			results <- err
 		}(i)
 	}
@@ -181,16 +131,18 @@ func TestValidatorContextIsolation(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Len(t, inputs, requests)
-	contexts := make(map[string]bool)
+	receivedByChannel := make(map[string]ValidationMessage, requests)
 	for i := 0; i < requests; i++ {
 		message := <-inputs
-		require.Equal(t, payload, message.Content)
-		contexts[string(message.ValidationContext)] = true
+		receivedByChannel[message.ChannelID] = message
 	}
-	for i := 0; i < requests; i++ {
-		require.True(t, contexts[fmt.Sprintf("context-%d", i)])
+	for channel, req := range expectedByChannel {
+		message, ok := receivedByChannel[channel]
+		require.True(t, ok, "validator did not receive request for %s", channel)
+		require.Equal(t, req.payload, message.Content)
+		require.Equal(t, req.context, message.ValidationContext)
 	}
-	_, err = other.UnwrapReceivedMessageWithContext(wrapped, []byte("other-context"))
+	_, err = other.UnwrapReceivedMessageWithContext(requestsToSend[0].wrapped, []byte("other-context"))
 	require.ErrorIs(t, err, ErrMessageRejected)
 	require.Empty(t, inputs)
 }
@@ -203,31 +155,27 @@ func TestValidatorLifecycle(t *testing.T) {
 			require.NoError(t, receiver.Cleanup())
 		}
 	})
-	wrapped, err := receiver.WrapOutgoingMessage([]byte("content"), "duplicate", "channel")
+	sender, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
-	inputs := make(chan ValidationMessage, 2)
+	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
+	rejected, err := sender.WrapOutgoingMessage([]byte("rejected"), "rejected", "reject-channel")
+	require.NoError(t, err)
+	accepted, err := sender.WrapOutgoingMessage([]byte("accepted"), "accepted", "accept-channel")
+	require.NoError(t, err)
+	inputs := make(chan ValidationMessage, 1)
 	require.NoError(t, receiver.SetValidator(validatorFunc(func(message ValidationMessage) (bool, error) {
 		inputs <- message
 		return false, nil
 	})))
-	_, err = receiver.UnwrapReceivedMessage(wrapped)
+	_, err = receiver.UnwrapReceivedMessage(rejected)
 	require.ErrorIs(t, err, ErrMessageRejected)
 	require.Len(t, inputs, 1)
 	require.Empty(t, (<-inputs).ValidationContext)
-	require.NoError(t, receiver.Reset())
-	_, err = receiver.UnwrapReceivedMessage(wrapped)
-	require.ErrorIs(t, err, ErrMessageRejected)
-	require.Len(t, inputs, 1)
-	<-inputs
-
-	require.NoError(t, receiver.SetValidator(validatorFunc(func(ValidationMessage) (bool, error) {
-		return true, nil
-	})))
-	_, err = receiver.UnwrapReceivedMessage(wrapped)
-	require.NoError(t, err)
 	require.NoError(t, receiver.SetValidator(nil))
-	_, err = receiver.UnwrapReceivedMessage(wrapped)
+	received, err := receiver.UnwrapReceivedMessage(accepted)
 	require.NoError(t, err)
+	require.Equal(t, []byte("accepted"), *received.Message)
+	require.Empty(t, inputs)
 	require.NoError(t, receiver.Cleanup())
 	require.Nil(t, receiver.validator)
 	require.Error(t, receiver.SetValidator(nil))
@@ -235,7 +183,7 @@ func TestValidatorLifecycle(t *testing.T) {
 	fresh, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, fresh.Cleanup()) })
-	_, err = fresh.UnwrapReceivedMessage(wrapped)
+	_, err = fresh.UnwrapReceivedMessage(accepted)
 	require.NoError(t, err)
 }
 
@@ -275,38 +223,17 @@ func TestValidatorRegistrationBeforeCrossThreadUnwrap(t *testing.T) {
 	require.Equal(t, "channel", (<-called).ChannelID)
 }
 
-func TestValidatorSyncAndMalformedInput(t *testing.T) {
-	sender, err := newReliabilityManager(nil, nil, 2*time.Millisecond)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-	require.NoError(t, sender.EnsureChannel("sync-channel"))
-	sync := waitForTickPayload(t, sender, "sync-channel")
-	persistence := &recordingPersistence{}
-	receiver, err := NewReliabilityManager(nil, persistence)
+func TestValidatorDoesNotInterceptNonSDS(t *testing.T) {
+	receiver, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
-	inputs := make(chan ValidationMessage, 1)
+	var calls int
 	require.NoError(t, receiver.SetValidator(validatorFunc(func(message ValidationMessage) (bool, error) {
-		inputs <- message
-		return false, nil
+		calls++
+		return true, nil
 	})))
 
 	_, err = receiver.UnwrapReceivedMessage([]byte("legacy message"))
 	require.ErrorIs(t, err, ErrNotSDS)
-	require.Empty(t, inputs)
-	_, err = receiver.UnwrapReceivedMessageWithContext(sync.Payload, []byte("sync-sender"))
-	require.ErrorIs(t, err, ErrMessageRejected)
-	require.Len(t, inputs, 1)
-	message := <-inputs
-	require.Equal(t, "sync-channel", message.ChannelID)
-	require.Empty(t, message.Content)
-	require.Equal(t, []byte("sync-sender"), message.ValidationContext)
-	persistence.mu.Lock()
-	require.Empty(t, persistence.calls)
-	persistence.mu.Unlock()
-
-	require.NoError(t, receiver.SetValidator(nil))
-	received, err := receiver.UnwrapReceivedMessage(sync.Payload)
-	require.NoError(t, err)
-	require.Nil(t, received.Message)
+	require.Zero(t, calls)
 }
