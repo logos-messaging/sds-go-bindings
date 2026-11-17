@@ -54,8 +54,8 @@ type ReliabilityManager struct {
 	callbacks   EventCallbacks
 	persistence PersistenceCallbacks
 	// Native FFI requests can arrive from different OS-thread queues. Serialize
-	// configuration changes with unwraps so an in-flight registration cannot be
-	// overtaken by an unwrap before its completion acknowledgement.
+	// configuration changes with unwraps so registration is applied before a
+	// later unwrap can reach the worker.
 	validatorConfigMu sync.RWMutex
 	validatorMu       sync.RWMutex
 	validator         Validator

@@ -34,10 +34,10 @@ the older message-ID-only callback remains supported as a fallback.
 
 ## Incoming message validation
 
-Register a `sds.Validator` with `SetValidator`; it returns after the native
-worker applies the change. Use `UnwrapReceivedMessageWithContext` to pass
-request-local host context such as an authenticated transport identity.
-`SetValidator(nil)` disables validation.
+Register a `sds.Validator` with `SetValidator` before receiving messages; it
+returns after the native worker applies the change. Use
+`UnwrapReceivedMessageWithContext` to pass request-local host context such as
+an authenticated transport identity. `SetValidator(nil)` disables validation.
 
 The API and validation semantics are documented in
 [nim-sds' incoming message validation guide](https://github.com/logos-messaging/nim-sds#incoming-message-validation).
