@@ -32,7 +32,7 @@ package sds
 	int sds_set_retrieval_hint_provider(void* ctx, SdsRetrievalHintProvider callback, void* userData);
 	int sds_set_channel_retrieval_hint_provider(void* ctx, SdsChannelRetrievalHintProvider callback, void* userData);
 	int sds_set_persistence_callback(void* ctx, SdsPersistenceCallback callback, void* userData);
-	int sds_set_validator(void* ctx, SdsValidatorCallback callback, void* userData, FFICallback completionCallback, void* completionUserData);
+	int sds_set_validator(void* ctx, SdsValidatorCallback callback, void* userData);
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
@@ -147,8 +147,8 @@ package sds
 		return sdsGlobalValidatorCallback((uint8_t*) channelId, channelIdLen, (uint8_t*) content, contentLen, (uint8_t*) senderId, senderIdLen, (uint8_t*) validationContext, validationContextLen, (uintptr_t) userData);
 	}
 
-	static int cGoSdsSetValidator(uintptr_t ctx, int enabled, void* resp) {
-		return sds_set_validator((void*) ctx, enabled ? (SdsValidatorCallback) cGoSdsValidatorTrampoline : NULL, enabled ? (void*) ctx : NULL, (FFICallback) SdsGoCallback, resp);
+	static int cGoSdsSetValidator(uintptr_t ctx, int enabled) {
+		return sds_set_validator((void*) ctx, enabled ? (SdsValidatorCallback) cGoSdsValidatorTrampoline : NULL, enabled ? (void*) ctx : NULL);
 	}
 
 	static int cGoSdsWrapOutgoingMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
@@ -217,22 +217,6 @@ func awaitResp(fire func(resp unsafe.Pointer)) unsafe.Pointer {
 	done := make(chan struct{})
 	respWaiters.Store(uintptr(resp), done)
 	fire(resp)
-	<-done
-	respWaiters.Delete(uintptr(resp))
-	return resp
-}
-
-// awaitRespWithDispatch handles native setters whose immediate return reports
-// dispatch status and whose callback reports when the worker applies the change.
-// A dispatch failure cannot deliver that completion callback.
-func awaitRespWithDispatch(fire func(resp unsafe.Pointer) C.int) unsafe.Pointer {
-	resp := C.allocResp()
-	done := make(chan struct{})
-	respWaiters.Store(uintptr(resp), done)
-	if dispatchRet := fire(resp); dispatchRet != C.RET_OK {
-		(*C.SdsResp)(resp).ret = dispatchRet
-		close(done)
-	}
 	<-done
 	respWaiters.Delete(uintptr(resp))
 	return resp
@@ -615,23 +599,15 @@ func (rm *ReliabilityManager) SetValidator(validator Validator) error {
 	rm.validator = validator
 	rm.validatorMu.Unlock()
 
-	var enabled C.int
+	enabled := C.int(0)
 	if validator != nil {
 		enabled = 1
 	}
-	resp := awaitRespWithDispatch(func(resp unsafe.Pointer) C.int {
-		return C.cGoSdsSetValidator(C.uintptr_t(rm.rmCtx), enabled, resp)
-	})
-	defer C.freeResp(resp)
-	if ret := C.getRet(resp); ret != C.RET_OK {
+	if ret := C.cGoSdsSetValidator(C.uintptr_t(rm.rmCtx), enabled); ret != C.RET_OK {
 		rm.validatorMu.Lock()
 		rm.validator = previous
 		rm.validatorMu.Unlock()
-		message := respString(resp)
-		if message == "" {
-			return fmt.Errorf("failed to register SDS validator: code %d", int(ret))
-		}
-		return fmt.Errorf("failed to register SDS validator: %s", message)
+		return fmt.Errorf("failed to register SDS validator: code %d", int(ret))
 	}
 	return nil
 }
