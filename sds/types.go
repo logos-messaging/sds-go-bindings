@@ -13,21 +13,21 @@ type UnwrappedMessage struct {
 	ChannelId   *string         `json:"channelId"`
 }
 
-// ValidationMessage contains decoded SDS content and opaque host-provided context.
+// AuthorizationMessage contains decoded SDS content and opaque host-provided context.
 // SenderID is untrusted wire metadata, not an authenticated sender identity.
-// The slices are owned by Go and may be retained by the validator.
-type ValidationMessage struct {
-	ChannelID         string
-	Content           []byte
-	SenderID          string
-	ValidationContext []byte
+// The slices are owned by Go and may be retained by the authorizer.
+type AuthorizationMessage struct {
+	ChannelID            string
+	Content              []byte
+	SenderID             string
+	AuthorizationContext []byte
 }
 
-// Validator authorizes an incoming message before SDS processes its metadata.
-// Validate runs synchronously on the native worker, including for duplicates
+// Authorizer authorizes an incoming message before SDS processes its metadata.
+// Authorize runs synchronously on the native worker, including for duplicates
 // and empty-content syncs. It must not re-enter the same ReliabilityManager.
-type Validator interface {
-	Validate(message ValidationMessage) (bool, error)
+type Authorizer interface {
+	Authorize(message AuthorizationMessage) (bool, error)
 }
 
 // TickEvent is the result for one ensured channel. A payload is present when

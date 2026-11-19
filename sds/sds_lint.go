@@ -51,13 +51,13 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 	return nil, ErrLintBuild
 }
 
-// SetValidator returns an error in lint builds.
-func (rm *ReliabilityManager) SetValidator(validator Validator) error {
+// SetAuthorizer returns an error in lint builds.
+func (rm *ReliabilityManager) SetAuthorizer(authorizer Authorizer) error {
 	return ErrLintBuild
 }
 
 // UnwrapReceivedMessageWithContext returns an error in lint builds.
-func (rm *ReliabilityManager) UnwrapReceivedMessageWithContext(message, validationContext []byte) (*UnwrappedMessage, error) {
+func (rm *ReliabilityManager) UnwrapReceivedMessageWithContext(message, authorizationContext []byte) (*UnwrappedMessage, error) {
 	return nil, ErrLintBuild
 }
 

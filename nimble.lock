@@ -272,8 +272,8 @@
       }
     },
     "sds": {
-      "version": "#e8cb53503835230bf3d7842b4486fffcb52b5ee7",
-      "vcsRevision": "e8cb53503835230bf3d7842b4486fffcb52b5ee7",
+      "version": "#1c47b477ac3c1e815884cf06fffc328007e0d3fc",
+      "vcsRevision": "1c47b477ac3c1e815884cf06fffc328007e0d3fc",
       "url": "https://github.com/logos-messaging/nim-sds",
       "downloadMethod": "git",
       "dependencies": [
@@ -288,7 +288,7 @@
         "ffi"
       ],
       "checksums": {
-        "sha1": "05699e5f11f49fce7b6a92b6d215c070ccf275de"
+        "sha1": "b15438bc6bab40aa4d4ab33c046737d4af9c0b20"
       }
     }
   },

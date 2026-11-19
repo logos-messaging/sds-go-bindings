@@ -14,12 +14,12 @@ const EventChanBufferSize = 1024
 // Callers supporting legacy unwrapped payloads may pass through only this error.
 var ErrNotSDS = errors.New("payload is not a valid SDS message")
 
-// ErrMessageRejected means the validator denied the incoming message.
-var ErrMessageRejected = errors.New("SDS message rejected by validator")
+// ErrMessageRejected means the authorizer denied the incoming message.
+var ErrMessageRejected = errors.New("SDS message rejected by authorizer")
 
-// ErrValidationFailed means the validator could not authorize the message.
-// The validator's original error is logged by the manager.
-var ErrValidationFailed = errors.New("SDS message validation failed")
+// ErrAuthorizationFailed means the authorizer could not authorize the message.
+// The authorizer's original error is logged by the manager.
+var ErrAuthorizationFailed = errors.New("SDS message authorization failed")
 
 type EventCallbacks struct {
 	OnMessageReady               func(messageId MessageID, channelId string)
@@ -40,9 +40,9 @@ type ReliabilityManager struct {
 	// Native FFI requests can arrive from different OS-thread queues. Serialize
 	// configuration changes with unwraps so registration is applied before a
 	// later unwrap can reach the worker.
-	validatorConfigMu sync.RWMutex
-	validatorMu       sync.RWMutex
-	validator         Validator
+	authorizerConfigMu sync.RWMutex
+	authorizerMu       sync.RWMutex
+	authorizer         Authorizer
 }
 
 // The event callback sends back the rm ctx to know to which
