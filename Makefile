@@ -5,6 +5,7 @@ NIMBLE ?= nimble
 GO ?= go
 
 LIB_DIR ?= $(CURDIR)/build
+TEST_LIB_DIR ?= $(CURDIR)/build/test
 LIB_EXT ?= $(if $(filter Windows_NT,$(OS)),dll,$(if $(filter Darwin,$(shell uname -s)),dylib,so))
 
 LIB := $(LIB_DIR)/libsds.$(LIB_EXT)
@@ -19,7 +20,7 @@ export CGO_LDFLAGS = -L$(LIB_DIR) -lsds $(LIB_RPATH)
 
 NIM_PARAMS ?= --mm:orc -d:useMalloc --opt:size -d:chronicles_line_numbers -d:chronicles_log_level=TRACE
 
-.PHONY: deps libsds build test test-ios-mm lint print-cgo clean
+.PHONY: deps libsds build test test-run test-ios-mm lint print-cgo clean
 
 deps: nimble.paths ##@build Resolve the Nim dependencies
 
@@ -45,18 +46,21 @@ libsds: $(LIB) ##@build Build libsds from the Nimble dependency
 build: $(LIB) ##@build Build the Go packages
 	$(GO) build ./...
 
-test: $(LIB) ##@test Run the Go tests; TEST=<name> to select one
+test: ##@test Run the Go tests; TEST=<name> to select one
+	$(MAKE) test-run LIB_DIR="$(TEST_LIB_DIR)" NIM_PARAMS="$(NIM_PARAMS) -d:sdsTest"
+
+test-run: $(LIB)
 	@if [ -z "$(TEST)" ]; then \
-		$(GO) test -race ./...; \
+		$(GO) test -race $(GO_TEST_ARGS) ./...; \
 	else \
-		$(GO) test ./... -count=1 -run $(TEST) -v; \
+		$(GO) test $(GO_TEST_ARGS) ./... -count=1 -run $(TEST) -v; \
 	fi
 
 IOS_MM_NIM_PARAMS ?= --mm:orc -d:useMalloc
 
 test-ios-mm: ##@test Run the Go tests against libsds built with the iOS memory manager
 	NIM_PARAMS="$(IOS_MM_NIM_PARAMS)" MallocScribble=1 MALLOC_PERTURB_=85 GOFLAGS=-count=1 \
-		$(MAKE) test LIB_DIR=$(CURDIR)/build-ios-mm
+		$(MAKE) test TEST_LIB_DIR=$(CURDIR)/build-ios-mm
 
 lint: $(LIB) ##@test Vet and build the lint stubs
 	$(GO) vet ./...

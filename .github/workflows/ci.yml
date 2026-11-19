@@ -83,10 +83,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Put test libsds on PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "$env:GITHUB_WORKSPACE\build\test" >> $env:GITHUB_PATH
+
       # nim-ffi's one-entry request channel wedges under stress on Windows runners.
       - name: Test
         shell: bash
-        run: go test -race ${{ runner.os == 'Windows' && '-skip TestStress_' || '' }} ./...
+        run: make test ${{ matrix.make-args }} GO_TEST_ARGS="${{ runner.os == 'Windows' && '-skip TestStress_' || '' }}"
 
       - name: Test with the iOS memory manager
         if: runner.os != 'Windows' && matrix.mm == 'orc'
