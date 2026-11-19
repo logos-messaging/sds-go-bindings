@@ -14,13 +14,13 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-type validatorFunc func(ValidationMessage) (bool, error)
+type authorizerFunc func(AuthorizationMessage) (bool, error)
 
-func (f validatorFunc) Validate(message ValidationMessage) (bool, error) {
+func (f authorizerFunc) Authorize(message AuthorizationMessage) (bool, error) {
 	return f(message)
 }
 
-func TestValidatorDecisions(t *testing.T) {
+func TestAuthorizerDecisions(t *testing.T) {
 	payload := []byte{0, 1, 255}
 	channelID := "channel\x00id"
 	sender, err := NewReliabilityManager(nil, nil)
@@ -37,15 +37,15 @@ func TestValidatorDecisions(t *testing.T) {
 	}{
 		{name: "accept", accepted: true},
 		{name: "reject", expected: ErrMessageRejected},
-		{name: "fail", accepted: true, failure: errors.New("permission lookup failed"), expected: ErrValidationFailed},
+		{name: "fail", accepted: true, failure: errors.New("permission lookup failed"), expected: ErrAuthorizationFailed},
 	} {
 		t.Run(decision.name, func(t *testing.T) {
 			core, logs := observer.New(zap.DebugLevel)
 			receiver, err := NewReliabilityManager(zap.New(core), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
-			inputs := make(chan ValidationMessage, 1)
-			require.NoError(t, receiver.SetValidator(validatorFunc(func(message ValidationMessage) (bool, error) {
+			inputs := make(chan AuthorizationMessage, 1)
+			require.NoError(t, receiver.SetAuthorizer(authorizerFunc(func(message AuthorizationMessage) (bool, error) {
 				inputs <- message
 				return decision.accepted, decision.failure
 			})))
@@ -57,7 +57,7 @@ func TestValidatorDecisions(t *testing.T) {
 			require.Equal(t, channelID, message.ChannelID)
 			require.Equal(t, payload, message.Content)
 			require.Empty(t, message.SenderID)
-			require.Equal(t, context, message.ValidationContext)
+			require.Equal(t, context, message.AuthorizationContext)
 			if decision.expected == nil {
 				require.NoError(t, err)
 				require.Equal(t, payload, *received.Message)
@@ -67,7 +67,7 @@ func TestValidatorDecisions(t *testing.T) {
 				require.NotErrorIs(t, err, ErrNotSDS)
 			}
 			if decision.failure != nil {
-				entries := logs.FilterMessage("SDS message validation failed").All()
+				entries := logs.FilterMessage("SDS message authorization failed").All()
 				require.Len(t, entries, 1)
 				require.Equal(t, decision.failure.Error(), entries[0].ContextMap()["error"])
 			}
@@ -75,24 +75,24 @@ func TestValidatorDecisions(t *testing.T) {
 	}
 }
 
-func TestValidatorContextIsolation(t *testing.T) {
+func TestAuthorizerContextIsolation(t *testing.T) {
 	sender, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
 
 	const requests = 8
-	inputs := make(chan ValidationMessage, requests)
+	inputs := make(chan AuthorizationMessage, requests)
 	receiver, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
-	require.NoError(t, receiver.SetValidator(validatorFunc(func(message ValidationMessage) (bool, error) {
+	require.NoError(t, receiver.SetAuthorizer(authorizerFunc(func(message AuthorizationMessage) (bool, error) {
 		inputs <- message
 		return true, nil
 	})))
 	other, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, other.Cleanup()) })
-	require.NoError(t, other.SetValidator(validatorFunc(func(ValidationMessage) (bool, error) {
+	require.NoError(t, other.SetAuthorizer(authorizerFunc(func(AuthorizationMessage) (bool, error) {
 		return false, nil
 	})))
 
@@ -131,23 +131,23 @@ func TestValidatorContextIsolation(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Len(t, inputs, requests)
-	receivedByChannel := make(map[string]ValidationMessage, requests)
+	receivedByChannel := make(map[string]AuthorizationMessage, requests)
 	for i := 0; i < requests; i++ {
 		message := <-inputs
 		receivedByChannel[message.ChannelID] = message
 	}
 	for channel, req := range expectedByChannel {
 		message, ok := receivedByChannel[channel]
-		require.True(t, ok, "validator did not receive request for %s", channel)
+		require.True(t, ok, "authorizer did not receive request for %s", channel)
 		require.Equal(t, req.payload, message.Content)
-		require.Equal(t, req.context, message.ValidationContext)
+		require.Equal(t, req.context, message.AuthorizationContext)
 	}
 	_, err = other.UnwrapReceivedMessageWithContext(requestsToSend[0].wrapped, []byte("other-context"))
 	require.ErrorIs(t, err, ErrMessageRejected)
 	require.Empty(t, inputs)
 }
 
-func TestValidatorLifecycle(t *testing.T) {
+func TestAuthorizerLifecycle(t *testing.T) {
 	receiver, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -162,23 +162,23 @@ func TestValidatorLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	accepted, err := sender.WrapOutgoingMessage([]byte("accepted"), "accepted", "accept-channel")
 	require.NoError(t, err)
-	inputs := make(chan ValidationMessage, 1)
-	require.NoError(t, receiver.SetValidator(validatorFunc(func(message ValidationMessage) (bool, error) {
+	inputs := make(chan AuthorizationMessage, 1)
+	require.NoError(t, receiver.SetAuthorizer(authorizerFunc(func(message AuthorizationMessage) (bool, error) {
 		inputs <- message
 		return false, nil
 	})))
 	_, err = receiver.UnwrapReceivedMessage(rejected)
 	require.ErrorIs(t, err, ErrMessageRejected)
 	require.Len(t, inputs, 1)
-	require.Empty(t, (<-inputs).ValidationContext)
-	require.NoError(t, receiver.SetValidator(nil))
+	require.Empty(t, (<-inputs).AuthorizationContext)
+	require.NoError(t, receiver.SetAuthorizer(nil))
 	received, err := receiver.UnwrapReceivedMessage(accepted)
 	require.NoError(t, err)
 	require.Equal(t, []byte("accepted"), *received.Message)
 	require.Empty(t, inputs)
 	require.NoError(t, receiver.Cleanup())
-	require.Nil(t, receiver.validator)
-	require.Error(t, receiver.SetValidator(nil))
+	require.Nil(t, receiver.authorizer)
+	require.Error(t, receiver.SetAuthorizer(nil))
 
 	fresh, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestValidatorLifecycle(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestValidatorRegistrationBeforeCrossThreadUnwrap(t *testing.T) {
+func TestAuthorizerRegistrationBeforeCrossThreadUnwrap(t *testing.T) {
 	sender, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
@@ -197,13 +197,13 @@ func TestValidatorRegistrationBeforeCrossThreadUnwrap(t *testing.T) {
 	receiver, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
-	called := make(chan ValidationMessage, 1)
+	called := make(chan AuthorizationMessage, 1)
 	setterDone := make(chan error, 1)
 	releaseSetter := make(chan struct{})
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-		setterDone <- receiver.SetValidator(validatorFunc(func(message ValidationMessage) (bool, error) {
+		setterDone <- receiver.SetAuthorizer(authorizerFunc(func(message AuthorizationMessage) (bool, error) {
 			called <- message
 			return false, nil
 		}))
@@ -223,12 +223,12 @@ func TestValidatorRegistrationBeforeCrossThreadUnwrap(t *testing.T) {
 	require.Equal(t, "channel", (<-called).ChannelID)
 }
 
-func TestValidatorDoesNotInterceptNonSDS(t *testing.T) {
+func TestAuthorizerDoesNotInterceptNonSDS(t *testing.T) {
 	receiver, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
 	var calls int
-	require.NoError(t, receiver.SetValidator(validatorFunc(func(message ValidationMessage) (bool, error) {
+	require.NoError(t, receiver.SetAuthorizer(authorizerFunc(func(message AuthorizationMessage) (bool, error) {
 		calls++
 		return true, nil
 	})))
