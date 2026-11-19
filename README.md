@@ -19,6 +19,8 @@ Call `EnsureChannel(channelID)` for channels to monitor, including after a
 restart. Call `Tick()` regularly; it returns due payloads tagged with their
 channel IDs for the caller to publish. A `TickEvent` may instead contain an
 error for one channel; other channel results are still returned.
+An overall error can also accompany events generated before the failure;
+process those events even when `Tick()` returns an error.
 
 `UnwrapReceivedMessage` processes sync metadata and returns a nil `Message`
 because a sync has no application payload. Missing dependencies are still

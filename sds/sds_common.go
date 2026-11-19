@@ -19,7 +19,6 @@ type EventCallbacks struct {
 	OnMessageSent                func(messageId MessageID, channelId string)
 	OnMessageExpired             func(messageId MessageID, channelId string)
 	OnMissingDependencies        func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
-	OnPeriodicSync               func()
 	OnRepairReady                func(message []byte, channelId string)
 	RetrievalHintProvider        func(messageId MessageID) []byte
 	ChannelRetrievalHintProvider func(messageId MessageID, channelId string) []byte
@@ -116,10 +115,6 @@ func (rm *ReliabilityManager) OnEvent(eventStr string) {
 		rm.parseMessageExpiredEvent(eventStr)
 	case "missing_dependencies":
 		rm.parseMissingDepsEvent(eventStr)
-	case "periodic_sync":
-		if rm.callbacks.OnPeriodicSync != nil {
-			rm.callbacks.OnPeriodicSync()
-		}
 	case "repair_ready":
 		rm.parseRepairReadyEvent(eventStr)
 	}

@@ -259,7 +259,6 @@ var eventNames = []string{
 	"message_sent",
 	"message_expired",
 	"missing_dependencies",
-	"periodic_sync",
 	"repair_ready",
 }
 
@@ -524,7 +523,8 @@ func (rm *ReliabilityManager) EnsureChannel(channelId string) error {
 
 // Tick generates due sync payloads for all ensured channels. A per-channel
 // generation error is returned in that channel's TickEvent; request and
-// response decoding errors are returned as the method error.
+// response decoding errors are returned as the method error, together with
+// any events generated before an overall failure.
 func (rm *ReliabilityManager) Tick() ([]TickEvent, error) {
 	if rm == nil {
 		return nil, errEmptyReliabilityManager
@@ -546,11 +546,20 @@ func (rm *ReliabilityManager) Tick() ([]TickEvent, error) {
 }
 
 func decodeTickEvents(responseJSON string) ([]TickEvent, error) {
-	var events []TickEvent
-	if err := json.Unmarshal([]byte(responseJSON), &events); err != nil {
+	var response struct {
+		Events []TickEvent `json:"events"`
+		Error  string      `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(responseJSON), &response); err != nil {
 		return nil, fmt.Errorf("failed to decode tick events: %w", err)
 	}
-	return events, nil
+	if response.Events == nil {
+		return nil, errors.New("failed to decode tick events: missing events")
+	}
+	if response.Error != "" {
+		return response.Events, fmt.Errorf("SDS tick failed: %s", response.Error)
+	}
+	return response.Events, nil
 }
 
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {

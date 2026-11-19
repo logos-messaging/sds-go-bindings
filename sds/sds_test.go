@@ -186,17 +186,24 @@ func TestTickAndEnsureChannelNilManager(t *testing.T) {
 }
 
 func TestDecodeTickEvents(t *testing.T) {
-	events, err := decodeTickEvents(`[
+	events, err := decodeTickEvents(`{"events":[
 		{"channelId":"channel-a","payload":"AAH/"},
 		{"channelId":"channel-b","error":"reInvalidArgument"}
-	]`)
+	]}`)
 	require.NoError(t, err)
 	require.Equal(t, []TickEvent{
 		{ChannelID: "channel-a", Payload: []byte{0, 1, 255}},
 		{ChannelID: "channel-b", Error: "reInvalidArgument"},
 	}, events)
 
-	_, err = decodeTickEvents(`[{"channelId":"channel-a","payload":42}]`)
+	events, err = decodeTickEvents(`{"events":[{"channelId":"channel-a","payload":"AAH/"}],"error":"reInternalError"}`)
+	require.ErrorContains(t, err, "reInternalError")
+	require.Len(t, events, 1)
+	require.Equal(t, []byte{0, 1, 255}, events[0].Payload)
+
+	_, err = decodeTickEvents(`{"events":[{"channelId":"channel-a","payload":42}]}`)
+	require.Error(t, err)
+	_, err = decodeTickEvents(`{}`)
 	require.Error(t, err)
 }
 
@@ -453,51 +460,6 @@ func TestCallback_OnMissingDependencies(t *testing.T) {
 	}
 	if !foundDep {
 		t.Errorf("OnMissingDependencies did not report %q as missing, got: %v", msgID1, missingDepsList)
-	}
-}
-
-// Test OnPeriodicSync callback
-func TestCallback_OnPeriodicSync(t *testing.T) {
-	rm, err := NewReliabilityManager(nil, nil)
-	require.NoError(t, err)
-	defer rm.Cleanup()
-
-	syncCalled := false
-	var cbMutex sync.Mutex
-	// Use a channel to signal when the callback is hit
-	syncChan := make(chan bool, 1)
-
-	callbacks := EventCallbacks{
-		OnPeriodicSync: func() {
-			cbMutex.Lock()
-			if !syncCalled { // Only signal the first time
-				syncCalled = true
-				syncChan <- true
-			}
-			cbMutex.Unlock()
-		},
-	}
-
-	rm.RegisterCallbacks(callbacks)
-
-	// Start periodic tasks
-	err = rm.StartPeriodicTasks()
-	require.NoError(t, err)
-
-	// --- Verification ---
-	// Wait for the periodic sync callback with a timeout (needs to be longer than sync interval)
-	select {
-	case <-syncChan:
-		// Success
-	case <-time.After(10 * time.Second):
-		t.Errorf("Timed out waiting for OnPeriodicSync callback")
-	}
-
-	cbMutex.Lock()
-	defer cbMutex.Unlock()
-	if !syncCalled {
-		// This might happen if the timeout was too short
-		t.Logf("Warning: OnPeriodicSync might not have been called within the test timeout")
 	}
 }
 
