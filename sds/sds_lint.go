@@ -4,6 +4,7 @@ package sds
 
 import (
 	"errors"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -19,6 +20,11 @@ func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks)
 	return nil, ErrLintBuild
 }
 
+// NewReliabilityManagerWithSyncInterval returns an error in lint builds.
+func NewReliabilityManagerWithSyncInterval(logger *zap.Logger, persistence PersistenceCallbacks, syncMessageInterval time.Duration) (*ReliabilityManager, error) {
+	return nil, ErrLintBuild
+}
+
 // Cleanup returns an error in lint builds.
 func (rm *ReliabilityManager) Cleanup() error { return ErrLintBuild }
 
@@ -27,6 +33,16 @@ func (rm *ReliabilityManager) Reset() error { return ErrLintBuild }
 
 // WrapOutgoingMessage returns an error in lint builds.
 func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId MessageID, channelId string) ([]byte, error) {
+	return nil, ErrLintBuild
+}
+
+// EnsureChannel returns an error in lint builds.
+func (rm *ReliabilityManager) EnsureChannel(channelId string) error {
+	return ErrLintBuild
+}
+
+// Tick returns an error in lint builds.
+func (rm *ReliabilityManager) Tick() ([]TickEvent, error) {
 	return nil, ErrLintBuild
 }
 
