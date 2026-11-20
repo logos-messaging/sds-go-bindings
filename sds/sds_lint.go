@@ -4,6 +4,7 @@ package sds
 
 import (
 	"errors"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -16,6 +17,11 @@ var ErrLintBuild = errors.New("sds: lint-only build stub: native libsds not link
 
 // NewReliabilityManager returns an error in lint builds.
 func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks) (*ReliabilityManager, error) {
+	return nil, ErrLintBuild
+}
+
+// NewReliabilityManagerWithSyncInterval returns an error in lint builds.
+func NewReliabilityManagerWithSyncInterval(logger *zap.Logger, persistence PersistenceCallbacks, syncMessageInterval time.Duration) (*ReliabilityManager, error) {
 	return nil, ErrLintBuild
 }
 

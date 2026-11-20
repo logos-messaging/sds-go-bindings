@@ -22,6 +22,10 @@ error for one channel; other channel results are still returned.
 An overall error can also accompany events generated before the failure;
 process those events even when `Tick()` returns an error.
 
+`NewReliabilityManager` uses the native default interval of 30 seconds.
+Use `NewReliabilityManagerWithSyncInterval` to set another positive interval
+in whole milliseconds; zero selects the default.
+
 `UnwrapReceivedMessage` processes sync metadata and returns a nil `Message`
 because a sync has no application payload. Missing dependencies are still
 reported in `MissingDeps`; unwrap errors remain separate.
@@ -70,12 +74,11 @@ To build libsds here, from the nim-sds revision `nimble.lock` pins, with
 [Nimble](https://github.com/nim-lang/nimble) 0.26 or newer on `PATH`:
 
 ```
-make libsds        # builds the production libsds into build/
+make libsds        # builds libsds into build/
 make print-cgo     # the cgo flags for that build, to run Go yourself
-make test          # builds a test-only libsds into build/test/, then runs the Go tests
+make test          # builds libsds into build/, then runs the Go tests
 ```
 
 libsds builds with ORC; pass `NIM_PARAMS` to build it with other Nim flags.
-The test library enables a short sync interval override that is absent from the
-production FFI. On Windows, add `build/test` to `PATH` when running tests.
+On Windows, add `build` to `PATH` when running tests.
 Platform-specific libsds builds are owned by the consuming application.

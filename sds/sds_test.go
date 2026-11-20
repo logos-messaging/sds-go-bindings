@@ -54,15 +54,31 @@ func TestEnsureChannelAndTick(t *testing.T) {
 	require.Error(t, rm.EnsureChannel(""))
 }
 
+func TestSyncIntervalValidation(t *testing.T) {
+	for _, interval := range []time.Duration{-time.Millisecond, time.Microsecond, time.Millisecond + time.Microsecond} {
+		rm, err := NewReliabilityManagerWithSyncInterval(nil, nil, interval)
+		require.Error(t, err)
+		require.Nil(t, rm)
+	}
+
+	rm, err := NewReliabilityManagerWithSyncInterval(nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rm.Cleanup()) })
+	require.NoError(t, rm.EnsureChannel("default-interval"))
+	events, err := rm.Tick()
+	require.NoError(t, err)
+	require.Empty(t, events)
+}
+
 func TestTickGeneratedSyncRoundTrip(t *testing.T) {
 	const syncInterval = 2 * time.Millisecond
 	const channelID = "tick-round-trip"
 	const messageID = MessageID("tick-content")
 
-	sender, err := newReliabilityManager(nil, nil, syncInterval)
+	sender, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-	receiver, err := newReliabilityManager(nil, nil, syncInterval)
+	receiver, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
 
@@ -120,10 +136,10 @@ func TestTickGeneratedSyncReportsMissingDependencies(t *testing.T) {
 	const dependencyID = MessageID("missing-content")
 	const laterMessageID = MessageID("later-content")
 
-	sender, err := newReliabilityManager(nil, nil, syncInterval)
+	sender, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-	receiver, err := newReliabilityManager(nil, nil, syncInterval)
+	receiver, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
 

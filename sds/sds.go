@@ -217,7 +217,7 @@ func awaitResp(fire func(resp unsafe.Pointer)) unsafe.Pointer {
 type sdsConfig struct {
 	ParticipantId         string `cbor:"participantId"`
 	PersistenceEnabled    bool   `cbor:"persistenceEnabled"`
-	SyncMessageIntervalMs int64  `cbor:"syncMessageIntervalMs,omitempty"` // test-only override
+	SyncMessageIntervalMs int64  `cbor:"syncMessageIntervalMs,omitempty"`
 }
 
 type sdsCreateRequest struct {
@@ -328,10 +328,15 @@ func (rm *ReliabilityManager) request(
 // NewReliabilityManager creates a manager with the given persistence backend.
 // Pass nil for persistence to keep channel state in memory only.
 func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks) (*ReliabilityManager, error) {
-	return newReliabilityManager(logger, persistence, 0)
+	return NewReliabilityManagerWithSyncInterval(logger, persistence, 0)
 }
 
-func newReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks, syncMessageInterval time.Duration) (*ReliabilityManager, error) {
+// NewReliabilityManagerWithSyncInterval sets the sync interval in whole milliseconds.
+// Zero uses the native default.
+func NewReliabilityManagerWithSyncInterval(logger *zap.Logger, persistence PersistenceCallbacks, syncMessageInterval time.Duration) (*ReliabilityManager, error) {
+	if syncMessageInterval < 0 || syncMessageInterval%time.Millisecond != 0 {
+		return nil, errors.New("sync interval must be zero or a positive whole number of milliseconds")
+	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
