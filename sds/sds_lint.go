@@ -51,6 +51,16 @@ func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedM
 	return nil, ErrLintBuild
 }
 
+// SetAuthorizer returns an error in lint builds.
+func (rm *ReliabilityManager) SetAuthorizer(authorizer Authorizer) error {
+	return ErrLintBuild
+}
+
+// UnwrapReceivedMessageWithContext returns an error in lint builds.
+func (rm *ReliabilityManager) UnwrapReceivedMessageWithContext(message, authorizationContext []byte) (*UnwrappedMessage, error) {
+	return nil, ErrLintBuild
+}
+
 // MarkDependenciesMet returns an error in lint builds.
 func (rm *ReliabilityManager) MarkDependenciesMet(messageIDs []MessageID, channelId string) error {
 	return ErrLintBuild

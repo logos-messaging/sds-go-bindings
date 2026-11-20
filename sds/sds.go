@@ -17,6 +17,7 @@ package sds
 	typedef void (*SdsRetrievalHintProvider)(const char* messageId, char** hint, size_t* hintLen, void* userData);
 	typedef void (*SdsChannelRetrievalHintProvider)(const char* messageId, const uint8_t* channelId, size_t channelIdLen, char** hint, size_t* hintLen, void* userData);
 	typedef int (*SdsPersistenceCallback)(int operation, const uint8_t* channelId, size_t channelIdLen, const uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, void* userData);
+	typedef int (*SdsAuthorizerCallback)(const uint8_t* channelId, size_t channelIdLen, const uint8_t* content, size_t contentLen, const uint8_t* senderId, size_t senderIdLen, const uint8_t* authorizationContext, size_t authorizationContextLen, void* userData);
 
 	void* sds_create(const uint8_t* req, size_t reqLen, FFICallback callback, void* userData);
 	int sds_wrap_outgoing_message(void* ctx, FFICallback callback, void* userData, const uint8_t* req, size_t reqLen);
@@ -31,12 +32,14 @@ package sds
 	int sds_set_retrieval_hint_provider(void* ctx, SdsRetrievalHintProvider callback, void* userData);
 	int sds_set_channel_retrieval_hint_provider(void* ctx, SdsChannelRetrievalHintProvider callback, void* userData);
 	int sds_set_persistence_callback(void* ctx, SdsPersistenceCallback callback, void* userData);
+	int sds_set_authorizer(void* ctx, SdsAuthorizerCallback callback, void* userData);
 
 	extern void sdsGlobalEventCallback(int ret, char* msg, size_t len, uintptr_t ctx);
 
 	extern void sdsGlobalRetrievalHintProvider(char* messageId, char** hint, size_t* hintLen, uintptr_t ctx);
 	extern void sdsGlobalChannelRetrievalHintProvider(char* messageId, uint8_t* channelId, size_t channelIdLen, char** hint, size_t* hintLen, uintptr_t ctx);
 	extern int sdsGlobalPersistenceCallback(int operation, uint8_t* channelId, size_t channelIdLen, uint8_t* payload, size_t payloadLen, char** response, size_t* responseLen, uintptr_t ctx);
+	extern int sdsGlobalAuthorizerCallback(uint8_t* channelId, size_t channelIdLen, uint8_t* content, size_t contentLen, uint8_t* senderId, size_t senderIdLen, uint8_t* authorizationContext, size_t authorizationContextLen, uintptr_t ctx);
 
 	typedef struct {
 		int ret;
@@ -140,6 +143,14 @@ package sds
 		return sds_set_persistence_callback((void*) ctx, (SdsPersistenceCallback) cGoSdsPersistenceTrampoline, (void*) ctx);
 	}
 
+	static int cGoSdsAuthorizerTrampoline(const uint8_t* channelId, size_t channelIdLen, const uint8_t* content, size_t contentLen, const uint8_t* senderId, size_t senderIdLen, const uint8_t* authorizationContext, size_t authorizationContextLen, void* userData) {
+		return sdsGlobalAuthorizerCallback((uint8_t*) channelId, channelIdLen, (uint8_t*) content, contentLen, (uint8_t*) senderId, senderIdLen, (uint8_t*) authorizationContext, authorizationContextLen, (uintptr_t) userData);
+	}
+
+	static int cGoSdsSetAuthorizer(uintptr_t ctx, int enabled) {
+		return sds_set_authorizer((void*) ctx, enabled ? (SdsAuthorizerCallback) cGoSdsAuthorizerTrampoline : NULL, enabled ? (void*) ctx : NULL);
+	}
+
 	static int cGoSdsWrapOutgoingMessage(uintptr_t ctx, const void* req, size_t reqLen, void* resp) {
 		return sds_wrap_outgoing_message((void*) ctx, (FFICallback) SdsGoCallback, resp, (const uint8_t*) req, reqLen);
 	}
@@ -239,7 +250,8 @@ type sdsWrapResponse struct {
 }
 
 type sdsUnwrapRequest struct {
-	Message []byte `cbor:"message"`
+	Message              []byte `cbor:"message"`
+	AuthorizationContext []byte `cbor:"authorizationContext,omitempty"`
 }
 
 type sdsMarkDependenciesRequest struct {
@@ -451,6 +463,8 @@ func (rm *ReliabilityManager) Cleanup() error {
 	if rm == nil {
 		return errEmptyReliabilityManager
 	}
+	rm.authorizerConfigMu.Lock()
+	defer rm.authorizerConfigMu.Unlock()
 
 	rm.logger.Debug("cleaning up reliability manager")
 
@@ -459,6 +473,9 @@ func (rm *ReliabilityManager) Cleanup() error {
 	}
 
 	unregisterReliabilityManager(rm)
+	rm.authorizerMu.Lock()
+	rm.authorizer = nil
+	rm.authorizerMu.Unlock()
 	rm.logger.Debug("cleaned up reliability manager")
 	return nil
 }
@@ -567,19 +584,64 @@ func decodeTickEvents(responseJSON string) ([]TickEvent, error) {
 	return response.Events, nil
 }
 
+// SetAuthorizer registers or replaces the optional incoming message authorizer.
+// It returns after the native worker applies the change. Pass nil to disable
+// authorization; configure it before accepting messages. Do not call it from an
+// authorizer or another callback on the same manager.
+func (rm *ReliabilityManager) SetAuthorizer(authorizer Authorizer) error {
+	if rm == nil {
+		return errEmptyReliabilityManager
+	}
+	rm.authorizerConfigMu.Lock()
+	defer rm.authorizerConfigMu.Unlock()
+
+	rm.authorizerMu.Lock()
+	previous := rm.authorizer
+	rm.authorizer = authorizer
+	rm.authorizerMu.Unlock()
+
+	enabled := C.int(0)
+	if authorizer != nil {
+		enabled = 1
+	}
+	if ret := C.cGoSdsSetAuthorizer(C.uintptr_t(rm.rmCtx), enabled); ret != C.RET_OK {
+		rm.authorizerMu.Lock()
+		rm.authorizer = previous
+		rm.authorizerMu.Unlock()
+		return fmt.Errorf("failed to register SDS authorizer: code %d", int(ret))
+	}
+	return nil
+}
+
 func (rm *ReliabilityManager) UnwrapReceivedMessage(message []byte) (*UnwrappedMessage, error) {
+	return rm.UnwrapReceivedMessageWithContext(message, nil)
+}
+
+// UnwrapReceivedMessageWithContext passes opaque host context to the authorizer.
+// Context is local to this request and is never included in the SDS wire message.
+func (rm *ReliabilityManager) UnwrapReceivedMessageWithContext(message, authorizationContext []byte) (*UnwrappedMessage, error) {
 	if rm == nil {
 		return nil, errEmptyReliabilityManager
 	}
+	rm.authorizerConfigMu.RLock()
+	defer rm.authorizerConfigMu.RUnlock()
 
-	reply, err := rm.request("error UnwrapReceivedMessage", sdsRequest[sdsUnwrapRequest]{Req: sdsUnwrapRequest{Message: message}},
+	reply, err := rm.request("error UnwrapReceivedMessage", sdsRequest[sdsUnwrapRequest]{Req: sdsUnwrapRequest{
+		Message: message, AuthorizationContext: authorizationContext,
+	}},
 		func(req unsafe.Pointer, reqLen C.size_t, resp unsafe.Pointer) C.int {
 			return C.cGoSdsUnwrapReceivedMessage(C.uintptr_t(rm.rmCtx), req, reqLen, resp)
 		})
 	if err != nil {
-		if nativeErr, ok := err.(*nativeRequestError); ok &&
-			nativeErr.message == "error processing unwrap request: reDeserializationError" {
-			return nil, fmt.Errorf("%w: %w", ErrNotSDS, err)
+		if nativeErr, ok := err.(*nativeRequestError); ok {
+			switch nativeErr.message {
+			case "error processing unwrap request: reDeserializationError":
+				return nil, fmt.Errorf("%w: %w", ErrNotSDS, err)
+			case "error processing unwrap request: reMessageRejected":
+				return nil, fmt.Errorf("%w: %w", ErrMessageRejected, err)
+			case "error processing unwrap request: reAuthorizationError":
+				return nil, fmt.Errorf("%w: %w", ErrAuthorizationFailed, err)
+			}
 		}
 		return nil, err
 	}
