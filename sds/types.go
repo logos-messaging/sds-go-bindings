@@ -59,6 +59,9 @@ type ChannelData struct {
 // unchanged. Implementations must return storage errors rather than discard them.
 // SDS logs save/update failures without aborting the protocol operation;
 // load/drop failures propagate to the caller.
+// The native persistence bridge drops a channel and retries its load once if
+// its stored metadata or history is corrupt. This discards its causal history
+// and buffered messages; unsupported metadata versions are not dropped.
 type PersistenceCallbacks interface {
 	// SaveChannelMeta replaces the channel's complete metadata snapshot.
 	// Saving the same snapshot repeatedly must be safe.

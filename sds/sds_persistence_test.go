@@ -20,6 +20,12 @@ func (p *loadFailurePersistence) LoadChannel(string) (ChannelData, error) {
 	return p.data, p.loadError
 }
 
+func (p *loadFailurePersistence) DropChannel(channelID string) error {
+	p.record("drop", channelID)
+	p.data = ChannelData{}
+	return nil
+}
+
 func TestUnwrapErrorClassification(t *testing.T) {
 	sender, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
@@ -44,16 +50,29 @@ func TestUnwrapErrorClassification(t *testing.T) {
 
 			_, err = receiver.UnwrapReceivedMessage([]byte("legacy payload"))
 			require.ErrorIs(t, err, ErrNotSDS)
-			_, err = receiver.UnwrapReceivedMessage(wrapped)
-			require.Error(t, err)
-			require.NotErrorIs(t, err, ErrNotSDS)
-			require.ErrorContains(t, err, "rePersistenceError")
-
-			persistence.loadError = nil
-			persistence.data = ChannelData{}
 			message, err := receiver.UnwrapReceivedMessage(wrapped)
+			if failure == "load" {
+				require.Error(t, err)
+				require.NotErrorIs(t, err, ErrNotSDS)
+				require.ErrorContains(t, err, "rePersistenceError")
+				persistence.loadError = nil
+				message, err = receiver.UnwrapReceivedMessage(wrapped)
+			}
 			require.NoError(t, err)
 			require.Equal(t, []byte("payload"), *message.Message)
+			persistence.mu.Lock()
+			defer persistence.mu.Unlock()
+			var drops []persistenceCall
+			for _, call := range persistence.calls {
+				if call.operation == "drop" {
+					drops = append(drops, call)
+				}
+			}
+			if failure == "load" {
+				require.Empty(t, drops)
+			} else {
+				require.Equal(t, []persistenceCall{{operation: "drop", channelID: "channel"}}, drops)
+			}
 		})
 	}
 }

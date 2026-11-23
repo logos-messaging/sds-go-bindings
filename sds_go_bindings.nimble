@@ -13,4 +13,4 @@ skipDirs = @["sds", "internal"]
 requires "nim >= 2.2.6"
 # nimble.lock pins the untagged chronos commit nim-ffi needs; a pin here breaks dependents.
 requires "chronos"
-requires "https://github.com/logos-messaging/nim-sds#bd28324438f793432bea78058407df4df5641fa4"
+requires "https://github.com/logos-messaging/nim-sds#8cb2c32356b6ebdb5cebdbec9fc76bc82790fa40"
