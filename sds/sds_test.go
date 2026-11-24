@@ -56,12 +56,12 @@ func TestEnsureChannelAndTick(t *testing.T) {
 
 func TestSyncIntervalValidation(t *testing.T) {
 	for _, interval := range []time.Duration{-time.Millisecond, time.Microsecond, time.Millisecond + time.Microsecond} {
-		rm, err := NewReliabilityManagerWithSyncInterval(nil, nil, interval)
+		rm, err := NewReliabilityManager(nil, nil, WithSyncInterval(interval))
 		require.Error(t, err)
 		require.Nil(t, rm)
 	}
 
-	rm, err := NewReliabilityManagerWithSyncInterval(nil, nil, 0)
+	rm, err := NewReliabilityManager(nil, nil, WithSyncInterval(0))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rm.Cleanup()) })
 	require.NoError(t, rm.EnsureChannel("default-interval"))
@@ -75,10 +75,10 @@ func TestTickGeneratedSyncRoundTrip(t *testing.T) {
 	const channelID = "tick-round-trip"
 	const messageID = MessageID("tick-content")
 
-	sender, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
+	sender, err := NewReliabilityManager(nil, nil, WithSyncInterval(syncInterval))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-	receiver, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
+	receiver, err := NewReliabilityManager(nil, nil, WithSyncInterval(syncInterval))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
 
@@ -136,10 +136,10 @@ func TestTickGeneratedSyncReportsMissingDependencies(t *testing.T) {
 	const dependencyID = MessageID("missing-content")
 	const laterMessageID = MessageID("later-content")
 
-	sender, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
+	sender, err := NewReliabilityManager(nil, nil, WithSyncInterval(syncInterval))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-	receiver, err := NewReliabilityManagerWithSyncInterval(nil, nil, syncInterval)
+	receiver, err := NewReliabilityManager(nil, nil, WithSyncInterval(syncInterval))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, receiver.Cleanup()) })
 

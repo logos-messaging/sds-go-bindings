@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -22,6 +23,21 @@ type EventCallbacks struct {
 	OnRepairReady                func(message []byte, channelId string)
 	RetrievalHintProvider        func(messageId MessageID) []byte
 	ChannelRetrievalHintProvider func(messageId MessageID, channelId string) []byte
+}
+
+// Option configures a ReliabilityManager.
+type Option func(*reliabilityManagerConfig)
+
+type reliabilityManagerConfig struct {
+	syncMessageInterval time.Duration
+}
+
+// WithSyncInterval sets the interval used to generate periodic sync messages.
+// Zero uses the native default. Non-zero values must be positive whole milliseconds.
+func WithSyncInterval(interval time.Duration) Option {
+	return func(config *reliabilityManagerConfig) {
+		config.syncMessageInterval = interval
+	}
 }
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager

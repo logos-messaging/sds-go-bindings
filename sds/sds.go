@@ -325,15 +325,17 @@ func (rm *ReliabilityManager) request(
 	return respBytes(resp), nil
 }
 
-// NewReliabilityManager creates a manager with the given persistence backend.
-// Pass nil for persistence to keep channel state in memory only.
-func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks) (*ReliabilityManager, error) {
-	return NewReliabilityManagerWithSyncInterval(logger, persistence, 0)
-}
-
-// NewReliabilityManagerWithSyncInterval sets the sync interval in whole milliseconds.
-// Zero uses the native default.
-func NewReliabilityManagerWithSyncInterval(logger *zap.Logger, persistence PersistenceCallbacks, syncMessageInterval time.Duration) (*ReliabilityManager, error) {
+// NewReliabilityManager creates a manager with the given persistence backend
+// and optional configuration. Pass nil for persistence to keep channel state
+// in memory only.
+func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks, options ...Option) (*ReliabilityManager, error) {
+	config := reliabilityManagerConfig{}
+	for _, option := range options {
+		if option != nil {
+			option(&config)
+		}
+	}
+	syncMessageInterval := config.syncMessageInterval
 	if syncMessageInterval < 0 || syncMessageInterval%time.Millisecond != 0 {
 		return nil, errors.New("sync interval must be zero or a positive whole number of milliseconds")
 	}
