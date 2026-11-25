@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -15,13 +16,28 @@ const EventChanBufferSize = 1024
 var ErrNotSDS = errors.New("payload is not a valid SDS message")
 
 type EventCallbacks struct {
-	OnMessageReady        func(messageId MessageID, channelId string)
-	OnMessageSent         func(messageId MessageID, channelId string)
-	OnMessageExpired      func(messageId MessageID, channelId string)
-	OnMissingDependencies func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
-	OnPeriodicSync        func()
-	OnRepairReady         func(message []byte, channelId string)
-	RetrievalHintProvider func(messageId MessageID) []byte
+	OnMessageReady               func(messageId MessageID, channelId string)
+	OnMessageSent                func(messageId MessageID, channelId string)
+	OnMessageExpired             func(messageId MessageID, channelId string)
+	OnMissingDependencies        func(messageId MessageID, missingDeps []HistoryEntry, channelId string)
+	OnRepairReady                func(message []byte, channelId string)
+	RetrievalHintProvider        func(messageId MessageID) []byte
+	ChannelRetrievalHintProvider func(messageId MessageID, channelId string) []byte
+}
+
+// Option configures a ReliabilityManager.
+type Option func(*reliabilityManagerConfig)
+
+type reliabilityManagerConfig struct {
+	syncMessageInterval time.Duration
+}
+
+// WithSyncInterval sets the interval used to generate periodic sync messages.
+// Zero uses the native default. Non-zero values must be positive whole milliseconds.
+func WithSyncInterval(interval time.Duration) Option {
+	return func(config *reliabilityManagerConfig) {
+		config.syncMessageInterval = interval
+	}
 }
 
 // ReliabilityManager represents an instance of a nim-sds ReliabilityManager
@@ -115,10 +131,6 @@ func (rm *ReliabilityManager) OnEvent(eventStr string) {
 		rm.parseMessageExpiredEvent(eventStr)
 	case "missing_dependencies":
 		rm.parseMissingDepsEvent(eventStr)
-	case "periodic_sync":
-		if rm.callbacks.OnPeriodicSync != nil {
-			rm.callbacks.OnPeriodicSync()
-		}
 	case "repair_ready":
 		rm.parseRepairReadyEvent(eventStr)
 	}

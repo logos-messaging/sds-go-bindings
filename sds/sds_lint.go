@@ -4,7 +4,6 @@ package sds
 
 import (
 	"errors"
-
 	"go.uber.org/zap"
 )
 
@@ -15,7 +14,7 @@ import (
 var ErrLintBuild = errors.New("sds: lint-only build stub: native libsds not linked")
 
 // NewReliabilityManager returns an error in lint builds.
-func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks) (*ReliabilityManager, error) {
+func NewReliabilityManager(logger *zap.Logger, persistence PersistenceCallbacks, options ...Option) (*ReliabilityManager, error) {
 	return nil, ErrLintBuild
 }
 
@@ -27,6 +26,16 @@ func (rm *ReliabilityManager) Reset() error { return ErrLintBuild }
 
 // WrapOutgoingMessage returns an error in lint builds.
 func (rm *ReliabilityManager) WrapOutgoingMessage(message []byte, messageId MessageID, channelId string) ([]byte, error) {
+	return nil, ErrLintBuild
+}
+
+// EnsureChannel returns an error in lint builds.
+func (rm *ReliabilityManager) EnsureChannel(channelId string) error {
+	return ErrLintBuild
+}
+
+// Tick returns an error in lint builds.
+func (rm *ReliabilityManager) Tick() ([]TickEvent, error) {
 	return nil, ErrLintBuild
 }
 

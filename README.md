@@ -13,6 +13,25 @@ Leaving `OnMessageExpired` unset does not route expiry to `OnMessageSent`.
 Native sweep timing and counters are unchanged. The sweep counts elapsed resend
 intervals, not actual transmissions, and does not transmit retries.
 
+## Periodic sync messages
+
+Call `EnsureChannel(channelID)` for channels to monitor, including after a
+restart. Call `Tick()` regularly; it returns due payloads tagged with their
+channel IDs for the caller to publish. A `TickEvent` may instead contain an
+error for one channel; other channel results are still returned.
+An overall error can also accompany events generated before the failure;
+process those events even when `Tick()` returns an error.
+
+`NewReliabilityManager` uses the native default interval of 30 seconds.
+Use `NewReliabilityManagerWithSyncInterval` to set another positive interval
+in whole milliseconds; zero selects the default.
+
+`UnwrapReceivedMessage` processes sync metadata and returns a nil `Message`
+because a sync has no application payload. Missing dependencies are still
+reported in `MissingDeps`; unwrap errors remain separate.
+Use `ChannelRetrievalHintProvider` when retrieval hints depend on the channel;
+the older message-ID-only callback remains supported as a fallback.
+
 ## Persistence
 
 Pass an implementation of the `sds.PersistenceCallbacks` interface to
@@ -28,8 +47,8 @@ transactionally. Loading a new channel must return an empty `sds.ChannelData`
 without an error. Return storage errors from the methods rather than silently
 discarding them.
 
-The Nimble dependency is pinned to a nim-sds commit that includes the
-`sds_set_persistence_callback` persistence FFI.
+The Nimble dependency is pinned to a nim-sds commit that includes persistence
+callbacks and the `ensureChannel`/`tick` sync API.
 
 Persistence restores duplicate detection across manager restarts. SDS-R repair
 remains disabled because these bindings leave the participant ID empty.
@@ -55,8 +74,11 @@ To build libsds here, from the nim-sds revision `nimble.lock` pins, with
 [Nimble](https://github.com/nim-lang/nimble) 0.26 or newer on `PATH`:
 
 ```
-make test          # builds libsds into build/, then runs the Go tests
+make libsds        # builds libsds into build/
 make print-cgo     # the cgo flags for that build, to run Go yourself
+make test          # builds libsds into build/, then runs the Go tests
 ```
 
 libsds builds with ORC; pass `NIM_PARAMS` to build it with other Nim flags.
+On Windows, add `build` to `PATH` when running tests.
+Platform-specific libsds builds are owned by the consuming application.
