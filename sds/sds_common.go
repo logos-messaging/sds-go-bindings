@@ -3,6 +3,7 @@ package sds
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -10,6 +11,15 @@ import (
 )
 
 const EventChanBufferSize = 1024
+
+// ChannelLoadCorruptError identifies a channel whose persisted state failed to decode.
+type ChannelLoadCorruptError struct {
+	ChannelID string
+}
+
+func (e *ChannelLoadCorruptError) Error() string {
+	return fmt.Sprintf("could not decode persisted SDS state for channel %q", e.ChannelID)
+}
 
 // ErrNotSDS means the input could not be decoded as an SDS message.
 // Callers supporting legacy unwrapped payloads may pass through only this error.

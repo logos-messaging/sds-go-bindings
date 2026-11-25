@@ -71,6 +71,11 @@ SDS cannot deserialize the input. Callers supporting legacy unwrapped messages
 may pass through that input. Other errors, including persisted-state loading
 and response-decoding failures, must not be treated as unwrapped payloads.
 
+Use `errors.As` to check for `*sds.ChannelLoadCorruptError` from ensure, wrap,
+or unwrap. Its `ChannelID` identifies the persisted state that failed to
+decode. The caller owns any storage reset and can call `EnsureChannel`
+after clearing that channel's state.
+
 ## Installation
 
 These bindings link against libsds, the C library of

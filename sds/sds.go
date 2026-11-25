@@ -332,7 +332,18 @@ func (rm *ReliabilityManager) request(
 	defer C.freeResp(resp)
 
 	if C.getRet(resp) != C.RET_OK {
-		return nil, &nativeRequestError{prefix: errPrefix, message: respString(resp)}
+		message := respString(resp)
+		if len(message) != 0 && message[0] == '{' {
+			var detail struct {
+				Code      string `json:"code"`
+				ChannelID []byte `json:"channelIdBase64"`
+			}
+			if json.Unmarshal([]byte(message), &detail) == nil &&
+				detail.Code == "channel_load_corrupt" && len(detail.ChannelID) != 0 {
+				return nil, fmt.Errorf("%s: %w", errPrefix, &ChannelLoadCorruptError{ChannelID: string(detail.ChannelID)})
+			}
+		}
+		return nil, &nativeRequestError{prefix: errPrefix, message: message}
 	}
 	return respBytes(resp), nil
 }
