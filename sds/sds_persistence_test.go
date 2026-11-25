@@ -16,7 +16,8 @@ type loadFailurePersistence struct {
 	data      ChannelData
 }
 
-func (p *loadFailurePersistence) LoadChannel(string) (ChannelData, error) {
+func (p *loadFailurePersistence) LoadChannel(channelID string) (ChannelData, error) {
+	p.record("load", channelID)
 	return p.data, p.loadError
 }
 
@@ -27,13 +28,14 @@ func (p *loadFailurePersistence) DropChannel(channelID string) error {
 }
 
 func TestUnwrapErrorClassification(t *testing.T) {
+	const channelID = "channel\x00id"
 	sender, err := NewReliabilityManager(nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sender.Cleanup()) })
-	wrapped, err := sender.WrapOutgoingMessage([]byte("payload"), "message", "channel")
+	wrapped, err := sender.WrapOutgoingMessage([]byte("payload"), "message", channelID)
 	require.NoError(t, err)
 
-	for _, failure := range []string{"load", "metadata", "history"} {
+	for _, failure := range []string{"load", "metadata", "history", "unsupported-version"} {
 		t.Run(failure, func(t *testing.T) {
 			persistence := &loadFailurePersistence{}
 			switch failure {
@@ -43,6 +45,8 @@ func TestUnwrapErrorClassification(t *testing.T) {
 				persistence.data.Meta = []byte{0xff}
 			case "history":
 				persistence.data.MessageHistory = [][]byte{{0xff}}
+			case "unsupported-version":
+				persistence.data.Meta = []byte{0x08, 0xe7, 0x07, 0x10, 0x00}
 			}
 			receiver, err := NewReliabilityManager(nil, persistence)
 			require.NoError(t, err)
@@ -50,29 +54,45 @@ func TestUnwrapErrorClassification(t *testing.T) {
 
 			_, err = receiver.UnwrapReceivedMessage([]byte("legacy payload"))
 			require.ErrorIs(t, err, ErrNotSDS)
-			message, err := receiver.UnwrapReceivedMessage(wrapped)
-			if failure == "load" {
+			require.NoError(t, receiver.SetAuthorizer(authorizerFunc(func(AuthorizationMessage) (bool, error) {
+				return false, nil
+			})))
+			_, err = receiver.UnwrapReceivedMessage(wrapped)
+			require.ErrorIs(t, err, ErrMessageRejected)
+			require.Empty(t, persistence.calls)
+			require.NoError(t, receiver.SetAuthorizer(nil))
+
+			assertLoadError := func(err error) {
+				t.Helper()
 				require.Error(t, err)
 				require.NotErrorIs(t, err, ErrNotSDS)
-				require.ErrorContains(t, err, "rePersistenceError")
-				persistence.loadError = nil
-				message, err = receiver.UnwrapReceivedMessage(wrapped)
-			}
-			require.NoError(t, err)
-			require.Equal(t, []byte("payload"), *message.Message)
-			persistence.mu.Lock()
-			defer persistence.mu.Unlock()
-			var drops []persistenceCall
-			for _, call := range persistence.calls {
-				if call.operation == "drop" {
-					drops = append(drops, call)
+				var corrupt *ChannelLoadCorruptError
+				if failure == "metadata" || failure == "history" {
+					require.ErrorAs(t, err, &corrupt)
+					require.Equal(t, channelID, corrupt.ChannelID)
+				} else {
+					require.False(t, errors.As(err, &corrupt))
+					require.ErrorContains(t, err, "rePersistenceError")
 				}
 			}
-			if failure == "load" {
-				require.Empty(t, drops)
-			} else {
-				require.Equal(t, []persistenceCall{{operation: "drop", channelID: "channel"}}, drops)
-			}
+
+			assertLoadError(receiver.EnsureChannel(channelID))
+			_, err = receiver.WrapOutgoingMessage([]byte("payload"), "message", channelID)
+			assertLoadError(err)
+			_, err = receiver.UnwrapReceivedMessage(wrapped)
+			assertLoadError(err)
+			require.Equal(t, []persistenceCall{
+				{operation: "load", channelID: channelID},
+				{operation: "load", channelID: channelID},
+				{operation: "load", channelID: channelID},
+			}, persistence.calls)
+
+			persistence.loadError = nil
+			persistence.data = ChannelData{}
+			require.NoError(t, receiver.EnsureChannel(channelID))
+			message, err := receiver.UnwrapReceivedMessage(wrapped)
+			require.NoError(t, err)
+			require.Equal(t, []byte("payload"), *message.Message)
 		})
 	}
 }
