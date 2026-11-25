@@ -32,6 +32,19 @@ reported in `MissingDeps`; unwrap errors remain separate.
 Use `ChannelRetrievalHintProvider` when retrieval hints depend on the channel;
 the older message-ID-only callback remains supported as a fallback.
 
+## Incoming message authorization
+
+Register a `sds.Authorizer` with `SetAuthorizer` before receiving messages; it
+returns after the native worker applies the change. Pass `nil` to clear the
+authorizer. Use
+`UnwrapReceivedMessageWithContext` to pass request-local host context such as
+an authenticated transport identity. This context is not part of the wire
+message. Authorizers run synchronously on the native worker and must not
+re-enter the same manager.
+
+The API and authorization semantics are documented in
+[nim-sds' incoming message authorization guide](https://github.com/logos-messaging/nim-sds#incoming-message-authorization).
+
 ## Persistence
 
 Pass an implementation of the `sds.PersistenceCallbacks` interface to
@@ -48,7 +61,7 @@ without an error. Return storage errors from the methods rather than silently
 discarding them.
 
 The Nimble dependency is pinned to a nim-sds commit that includes persistence
-callbacks and the `ensureChannel`/`tick` sync API.
+callbacks, the `ensureChannel`/`tick` sync API, and manager-scoped authorizers.
 
 Persistence restores duplicate detection across manager restarts. SDS-R repair
 remains disabled because these bindings leave the participant ID empty.

@@ -68,3 +68,4 @@ print-cgo: ##@build Print the cgo flags, for a caller that runs Go itself
 
 clean:
 	@rm -rf $(LIB_DIR) $(CURDIR)/build-ios-mm nimble.paths nimbledeps
+	
